@@ -1,0 +1,157 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: palin
+  PACKAGE_NAME: palimpsest
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            ext: ""
+            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            ext: ""
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            ext: ""
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            ext: ""
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            ext: .exe
+            archive: zip
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            ext: .exe
+            archive: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation dependencies (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
+
+      - name: Install cross-compilation dependencies (Windows ARM64)
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        run: |
+          # VS2022 includes ARM64 cross-compiler
+          echo "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER=link.exe" >> $GITHUB_ENV
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          RUSTFLAGS: "-C target-cpu=generic"
+
+      - name: Prepare archive
+        shell: bash
+        run: |
+          BINARY="${{ env.BINARY_NAME }}${{ matrix.ext }}"
+          TARGET_DIR="target/${{ matrix.target }}/release"
+
+          # Create staging directory
+          STAGING="${{ env.PACKAGE_NAME }}-${{ matrix.target }}"
+          mkdir -p "$STAGING"
+
+          # Copy binary
+          cp "$TARGET_DIR/$BINARY" "$STAGING/$BINARY"
+
+          # Copy README and license if they exist
+          cp PALIMPSEST.md "$STAGING/" 2>/dev/null || true
+          cp LICENSE "$STAGING/" 2>/dev/null || true
+
+          # Create archive
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a -tzip "${STAGING}.zip" "$STAGING/"
+            echo "ARCHIVE=${STAGING}.zip" >> $GITHUB_ENV
+          else
+            tar -czf "${STAGING}.tar.gz" "$STAGING/"
+            echo "ARCHIVE=${STAGING}.tar.gz" >> $GITHUB_ENV
+          fi
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: ${{ env.ARCHIVE }}
+
+  create-release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: ls -R artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+
+  publish-npm:
+    name: Publish to npm
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      # Update the version in npm/package.json from the git tag
+      - name: Update npm package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "Version: $TAG"
+          cd npm
+          npm version "$TAG" --no-git-tag-version
+
+      - name: Publish to npm
+        run: |
+          cd npm
+          npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,0 +1,71 @@
+[package]
+name = "palin"
+version = "0.1.0"
+edition = "2024"
+description = "A CLI + TUI tool for layering your project's history through time"
+authors = ["Palimpsest"]
+
+[dependencies]
+# CLI framework
+clap = { version = "4", features = ["derive"] }
+
+# TUI (Phase 2, but included for scaffolding)
+ratatui = { version = "0.29", features = ["crossterm"], optional = true }
+crossterm = { version = "0.28", optional = true }
+
+# Database
+rusqlite = { version = "0.34", features = ["bundled"] }
+
+# Hashing
+sha2 = "0.10"
+hex = "0.4"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Diff engine
+similar = "2"
+
+# Regex for grep
+regex = "1"
+
+# Compression (Phase 3, but included for scaffolding)
+zstd = { version = "0.13", optional = true }
+
+# Archiving
+zip = "2"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Async (Phase 3)
+tokio = { version = "1", features = ["full"], optional = true }
+
+# Directories
+directories = "6"
+
+# Time
+chrono = "0.4"
+
+# Progress bar
+indicatif = "0.17"
+
+# Glob pattern matching
+globset = "0.4"
+ignore = "0.4"
+
+# Tar archive support
+tar = "0.4"
+flate2 = "1"
+
+[features]
+default = []
+tui = ["ratatui", "crossterm"]
+daemon = ["tokio", "zstd"]
+
+[[bin]]
+name = "palin"
+path = "src/main.rs"

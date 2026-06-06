@@ -1,0 +1,34 @@
+{
+  "name": "palimpsest",
+  "version": "0.1.0",
+  "description": "✦ Layer your project's history through time — a Git-inspired versioned snapshot browser for your local projects",
+  "bin": {
+    "palin": "cli.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": ["cli.js", "install.js", "package.json"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/katrate/palimpsest.git"
+  },
+  "keywords": [
+    "version-control",
+    "snapshots",
+    "timeline",
+    "backup",
+    "cli"
+  ],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/katrate/palimpsest/issues"
+  },
+  "homepage": "https://github.com/katrate/palimpsest#readme",
+  "os": ["win32", "darwin", "linux"],
+  "cpu": ["x64", "arm64"],
+  "engines": {
+    "node": ">=18"
+  }
+}
