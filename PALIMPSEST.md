@@ -12,12 +12,43 @@
 # Install globally via npm (requires Node.js 18+)
 npm install -g palimpsest
 
-# Or use the Rust build (requires Rust toolchain)
-# cargo install --path .
+# Or build from source (requires Rust)
+# cargo build --release && ./target/release/palin --help
 
 # Verify it works
 palin --help
 ```
+
+---
+
+## Publishing
+
+New releases are automatic — just push a tag:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+GitHub Actions will:
+1. Build binaries for Windows/macOS/Linux (x64 + ARM64)
+2. Create a GitHub Release with downloads
+3. Publish to npm via **Trusted Publishing (OIDC)** — no API tokens needed
+
+### First-time npm setup (one-time only)
+
+1. Go to **https://www.npmjs.com/settings/katrate/packages**
+2. Click **"Create Package"** → give it the name `palimpsest`
+3. Then go to the package's **Settings** → **Trusted Publishing**
+4. Click **"Add Publisher"** → select **GitHub Actions**
+5. Enter:
+   - **Owner:** `katrate`
+   - **Repository:** `palimpsest`
+   - **Workflow:** `release.yml`
+   - **Environment:** (leave blank)
+6. Click **Save**
+
+After that, every `git tag v*` push automatically publishes to npm.
 
 ---
 

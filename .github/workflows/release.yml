@@ -61,12 +61,6 @@ jobs:
           echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
 
-      - name: Install cross-compilation dependencies (Windows ARM64)
-        if: matrix.target == 'aarch64-pc-windows-msvc'
-        run: |
-          # VS2022 includes ARM64 cross-compiler
-          echo "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER=link.exe" >> $GITHUB_ENV
-
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
         env:
@@ -78,18 +72,12 @@ jobs:
           BINARY="${{ env.BINARY_NAME }}${{ matrix.ext }}"
           TARGET_DIR="target/${{ matrix.target }}/release"
 
-          # Create staging directory
           STAGING="${{ env.PACKAGE_NAME }}-${{ matrix.target }}"
           mkdir -p "$STAGING"
-
-          # Copy binary
           cp "$TARGET_DIR/$BINARY" "$STAGING/$BINARY"
-
-          # Copy README and license if they exist
           cp PALIMPSEST.md "$STAGING/" 2>/dev/null || true
           cp LICENSE "$STAGING/" 2>/dev/null || true
 
-          # Create archive
           if [ "${{ matrix.archive }}" = "zip" ]; then
             7z a -tzip "${STAGING}.zip" "$STAGING/"
             echo "ARCHIVE=${STAGING}.zip" >> $GITHUB_ENV
@@ -128,9 +116,12 @@ jobs:
           prerelease: false
 
   publish-npm:
-    name: Publish to npm
+    name: Publish to npm (OIDC)
     needs: create-release
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for npm Trusted Publishing (OIDC) — no token needed!
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -138,10 +129,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
-      # Update the version in npm/package.json from the git tag
       - name: Update npm package version
         run: |
           TAG="${GITHUB_REF_NAME#v}"
@@ -149,9 +139,8 @@ jobs:
           cd npm
           npm version "$TAG" --no-git-tag-version
 
+      # npm automatically uses OIDC when id-token: write is set — no NPM_TOKEN needed!
       - name: Publish to npm
         run: |
           cd npm
-          npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm publish --provenance
