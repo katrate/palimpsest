@@ -77,7 +77,7 @@ pub fn execute(
             if !yes && !dry_run {
                 let (restore_count, delete_count) = storage::restore_engine::count_restore_changes(&entries);
                 println!(
-                    "  Restore to {}? This will restore {} files and delete {} files.",
+                    "  Restore to {}? This will restore {} files, delete {} tracked files, and prune untracked files.",
                     display_name, restore_count, delete_count
                 );
                 print!("  Continue? [y/N]: ");
