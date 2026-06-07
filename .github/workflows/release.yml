@@ -115,31 +115,3 @@ jobs:
           draft: false
           prerelease: false
 
-  publish-npm:
-    name: Publish to npm (OIDC — no token needed!)
-    needs: create-release
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Set npm package version
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          echo "Version: $TAG"
-          cd npm
-          npm pkg set version="$TAG"
-
-      - name: Publish to npm
-        run: |
-          cd npm
-          npm publish --provenance --access public
