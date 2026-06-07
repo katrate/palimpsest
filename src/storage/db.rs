@@ -1,6 +1,6 @@
 use crate::types::*;
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 
 /// Open (or create) the SQLite database for a palin
 pub fn open_db(name: &str) -> anyhow::Result<Connection> {
@@ -104,16 +104,14 @@ pub fn create_epoch(
     Ok(conn.last_insert_rowid())
 }
 
-/// Get the latest epoch number
+/// Get the latest epoch number (returns -1 if no epochs exist)
 pub fn get_latest_epoch_num(conn: &Connection) -> anyhow::Result<i64> {
-    let val: Option<i64> = conn
-        .query_row(
-            "SELECT MAX(epoch_num) FROM epochs WHERE is_deleted = 0",
-            [],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(val.unwrap_or(-1))
+    let val: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(epoch_num), -1) FROM epochs WHERE is_deleted = 0",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(val)
 }
 
 /// Get the latest epoch (full row)
@@ -248,16 +246,14 @@ pub fn create_phantom(
     Ok(conn.last_insert_rowid())
 }
 
-/// Get the latest phantom number
+/// Get the latest phantom number (returns 0 if no phantoms exist)
 pub fn get_latest_phantom_num(conn: &Connection) -> anyhow::Result<i64> {
-    let val: Option<i64> = conn
-        .query_row(
-            "SELECT MAX(phantom_num) FROM phantoms WHERE is_deleted = 0",
-            [],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(val.unwrap_or(0))
+    let val: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(phantom_num), 0) FROM phantoms WHERE is_deleted = 0",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(val)
 }
 
 /// Get a phantom by number

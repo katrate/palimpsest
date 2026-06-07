@@ -72,22 +72,23 @@ pub fn execute(name: Option<&str>, message: Option<&str>) -> anyhow::Result<()> 
         is_first,
     )?;
 
-    // Insert file entries
-    storage::insert_file_entries(&conn, epoch_id, "epoch", &file_entries)?;
-
-    // Store inks and record references
-    for entry in &file_entries {
-        if let Some(ref _hash) = entry.ink_hash {
-            // Read file and store in ink store
+    // Store inks and record references first, updating hashes to match
+    // what was actually stored (important: the walker may compute a different
+    // hash for binary files than the content hash used by store_ink)
+    let mut entries = file_entries;
+    for entry in &mut entries {
+        if let Some(ref mut hash) = entry.ink_hash {
             let full_path = resolved.path.join(&entry.file_path);
             if full_path.exists() && entry.status != FileStatus::Deleted {
                 let content = std::fs::read(&full_path)?;
                 let stored_hash = crate::storage::ink::store_ink(&resolved.name, &content)?;
+                *hash = stored_hash.clone();
                 storage::upsert_ink(&conn, &stored_hash, content.len() as i64)?;
             } else if entry.status == FileStatus::Deleted {
                 // Still reference the ink if it was previously stored
                 if let Some(prev_entry) = previous_entries.iter().find(|e| e.file_path == entry.file_path) {
                     if let Some(prev_hash) = &prev_entry.ink_hash {
+                        *hash = prev_hash.clone();
                         storage::upsert_ink(&conn, prev_hash, entry.file_size.unwrap_or(0))?;
                     }
                 }
@@ -95,11 +96,14 @@ pub fn execute(name: Option<&str>, message: Option<&str>) -> anyhow::Result<()> 
         }
     }
 
+    // Now insert file entries with correct hashes
+    storage::insert_file_entries(&conn, epoch_id, "epoch", &entries)?;
+
     // Count changes
-    let added = file_entries.iter().filter(|e| e.status == FileStatus::Added).count();
-    let modified = file_entries.iter().filter(|e| e.status == FileStatus::Modified).count();
-    let deleted = file_entries.iter().filter(|e| e.status == FileStatus::Deleted).count();
-    let unchanged = file_entries.iter().filter(|e| e.status == FileStatus::Unchanged).count();
+    let added = entries.iter().filter(|e| e.status == FileStatus::Added).count();
+    let modified = entries.iter().filter(|e| e.status == FileStatus::Modified).count();
+    let deleted = entries.iter().filter(|e| e.status == FileStatus::Deleted).count();
+    let unchanged = entries.iter().filter(|e| e.status == FileStatus::Unchanged).count();
 
     let epoch_display = if is_first {
         "origin".to_string()
@@ -113,7 +117,7 @@ pub fn execute(name: Option<&str>, message: Option<&str>) -> anyhow::Result<()> 
     }
     println!(
         "  Files: +{added} ~{modified} -{deleted} ={unchanged} (total {})",
-        file_entries.len()
+        entries.len()
     );
 
     Ok(())
