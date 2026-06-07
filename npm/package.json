@@ -1,6 +1,6 @@
 {
-  "name": "palimpsest",
-  "version": "0.1.0",
+  "name": "palin-cli",
+  "version": "0.2.0",
   "description": "✦ Layer your project's history through time — a Git-inspired versioned snapshot browser for your local projects",
   "bin": {
     "palin": "cli.js"

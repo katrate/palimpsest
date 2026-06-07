@@ -74,14 +74,14 @@ git push origin v0.2.0
 GitHub Actions will:
 1. Build binaries for Windows/macOS/Linux (x64 + ARM64)
 2. Create a GitHub Release with downloads
-3. Publish the `palimpsest` npm package via **Trusted Publishing (OIDC)** — no API tokens needed
+3. Publish the `palin-cli` npm package via **Trusted Publishing (OIDC)** — no API tokens needed
 
 ### First-time npm setup (one-time only, do this before your first release)
 
 Before running the release workflow, you need to authorize the GitHub Action to publish to npm:
 
 1. Go to **https://www.npmjs.com/settings/katrate/packages**
-2. Click **"Create Package"** and create a package named `palimpsest`
+2. Click **"Create Package"** → give it the name `palin-cli`
 3. Go to the package's **Settings** → **Trusted Publishing**
 4. Click **"Add Publisher"** → select **GitHub Actions**
 5. Enter:
