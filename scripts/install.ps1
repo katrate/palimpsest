@@ -64,7 +64,7 @@ try {
 
   Write-Host "✓ palin installed successfully at ${InstallDir}\${Binary}.exe" -ForegroundColor Green
   Write-Host ""
-  Write-Host "  Run ``palin --help`` to get started" -ForegroundColor Green
+  Write-Host "  Run 'palin --help' to get started" -ForegroundColor Green
 
 } finally {
   # Cleanup
