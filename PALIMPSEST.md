@@ -8,15 +8,36 @@
 
 ## Quick Install
 
+Install Palimpsest with a single command — no npm, no Rust, no tokens needed.
+
+### macOS / Linux
+
 ```bash
-# Install globally via npm (requires Node.js 18+)
-npm install -g palimpsest
+curl -sSL https://raw.githubusercontent.com/katrate/palimpsest/main/scripts/install.sh | sh
+```
 
-# Or build from source (requires Rust)
-# cargo build --release && ./target/release/palin --help
+### Windows (PowerShell 5.1+)
 
-# Verify it works
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/katrate/palimpsest/main/scripts/install.ps1 | iex"
+```
+
+> The script downloads the pre-built binary from the latest GitHub Release
+> and places it in `/usr/local/bin` (or `~/.local/bin` as fallback on
+> macOS/Linux, or `%USERPROFILE%\.palin\bin` and adds it to your PATH on
+> Windows).
+
+### Verify
+
+```bash
 palin --help
+```
+
+### Build from source (requires Rust)
+
+```bash
+cargo build --release
+./target/release/palin --help
 ```
 
 ---
@@ -30,25 +51,7 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-GitHub Actions will:
-1. Build binaries for Windows/macOS/Linux (x64 + ARM64)
-2. Create a GitHub Release with downloads
-3. Publish to npm via **Trusted Publishing (OIDC)** — no API tokens needed
-
-### First-time npm setup (one-time only)
-
-1. Go to **https://www.npmjs.com/settings/katrate/packages**
-2. Click **"Create Package"** → give it the name `palimpsest`
-3. Then go to the package's **Settings** → **Trusted Publishing**
-4. Click **"Add Publisher"** → select **GitHub Actions**
-5. Enter:
-   - **Owner:** `katrate`
-   - **Repository:** `palimpsest`
-   - **Workflow:** `release.yml`
-   - **Environment:** (leave blank)
-6. Click **Save**
-
-After that, every `git tag v*` push automatically publishes to npm.
+GitHub Actions will build binaries for Windows/macOS/Linux (x64 + ARM64) and create a GitHub Release with downloads.
 
 ---
 
