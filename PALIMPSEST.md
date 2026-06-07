@@ -13,13 +13,13 @@ Install Palimpsest with a single command — no npm, no Rust, no tokens needed.
 ### macOS / Linux
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/katrate/palimpsest/main/scripts/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/katrate/palimpsest/master/scripts/install.sh | sh
 ```
 
 ### Windows (PowerShell 5.1+)
 
 ```powershell
-powershell -c "irm https://raw.githubusercontent.com/katrate/palimpsest/main/scripts/install.ps1 | iex"
+powershell -c "irm https://raw.githubusercontent.com/katrate/palimpsest/master/scripts/install.ps1 | iex"
 ```
 
 > The script downloads the pre-built binary from the latest GitHub Release
@@ -47,13 +47,13 @@ Same as install — one command to remove the tool.
 ### macOS / Linux
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/katrate/palimpsest/main/scripts/uninstall.sh | sh
+curl -sSL https://raw.githubusercontent.com/katrate/palimpsest/master/scripts/uninstall.sh | sh
 ```
 
 ### Windows (PowerShell 5.1+)
 
 ```powershell
-powershell -c "irm https://raw.githubusercontent.com/katrate/palimpsest/main/scripts/uninstall.ps1 | iex"
+powershell -c "irm https://raw.githubusercontent.com/katrate/palimpsest/master/scripts/uninstall.ps1 | iex"
 ```
 
 > This removes the `palin` binary and cleans up the PATH entry.
