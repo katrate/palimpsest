@@ -67,6 +67,10 @@ ureq = { version = "2", default-features = false, features = ["native-tls", "gzi
 tar = "0.4"
 flate2 = "1"
 
+# OpenSSL vendored — only on Linux (native-tls uses it); macOS uses Security.framework, Windows uses schannel
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+
 [features]
 default = []
 daemon = ["tokio", "zstd"]
