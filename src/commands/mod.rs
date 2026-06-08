@@ -8,7 +8,6 @@ pub mod phantoms;
 pub mod show;
 pub mod diff;
 pub mod blame;
-pub mod grep;
 pub mod rename;
 pub mod info;
 pub mod ignore;

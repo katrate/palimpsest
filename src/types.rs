@@ -269,19 +269,6 @@ pub struct BlameLine {
     pub epoch_display: String, // "origin", "epoch-3", etc.
 }
 
-// ─── Grep ────────────────────────────────────────────────────────────────
-
-/// A grep match result
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct GrepMatch {
-    pub file_path: String,
-    pub line_number: usize,
-    pub line_content: String,
-    pub epoch_num: i64,
-    pub epoch_display: String,
-}
-
 // ─── Export ──────────────────────────────────────────────────────────────
 
 /// Export format

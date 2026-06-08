@@ -111,19 +111,19 @@ enum Commands {
         name: Option<String>,
     },
 
-    /// Search file contents across all epochs for a pattern
-    Grep {
-        /// Regular expression pattern
-        pattern: String,
-        /// Palin name (optional, resolves from current directory)
-        name: Option<String>,
-    },
-
     /// Delete an epoch from a palin
     RmEpoch {
         /// Palin name
         name: String,
         /// Epoch number to delete
+        num: i64,
+    },
+
+    /// Delete a phantom from a palin
+    RmPhantom {
+        /// Palin name
+        name: String,
+        /// Phantom number to delete
         num: i64,
     },
 
@@ -308,12 +308,22 @@ fn main() -> anyhow::Result<()> {
         Commands::Blame { file, name } => {
             commands::blame::execute(&file, name.as_deref())?;
         }
-        Commands::Grep { pattern, name } => {
-            commands::grep::execute(&pattern, name.as_deref())?;
-        }
         Commands::RmEpoch { name, num } => {
             let conn = storage::open_db(&name)?;
             remove_epoch(&conn, &name, num)?;
+        }
+        Commands::RmPhantom { name, num } => {
+            let conn = storage::open_db(&name)?;
+            let phantom = storage::get_phantom_by_num(&conn, num)?
+                .ok_or_else(|| anyhow::anyhow!("Phantom {} not found for '{}'", num, name))?;
+            let entries = storage::get_file_entries(&conn, phantom.id, "phantom")?;
+            for entry in &entries {
+                if let Some(ref hash) = entry.ink_hash {
+                    storage::decrement_ink_ref(&conn, hash)?;
+                }
+            }
+            storage::delete_phantom(&conn, phantom.id)?;
+            println!("✦ Deleted phantom-{} from '{}'", num, name);
         }
         Commands::RmOrigin { name } => {
             let conn = storage::open_db(&name)?;

@@ -315,6 +315,15 @@ pub fn list_phantoms(conn: &Connection) -> anyhow::Result<Vec<Phantom>> {
     Ok(phantoms)
 }
 
+/// Soft-delete a phantom
+pub fn delete_phantom(conn: &Connection, phantom_id: i64) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE phantoms SET is_deleted = 1 WHERE id = ?1",
+        params![phantom_id],
+    )?;
+    Ok(())
+}
+
 /// Clean up expired phantoms
 pub fn cleanup_expired_phantoms(conn: &Connection) -> anyhow::Result<usize> {
     let now = Utc::now().to_rfc3339();
