@@ -15,29 +15,24 @@ use super::theme::Theme;
 pub fn render(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
 
-    // Always reserve space for the command bar at the bottom
-    let has_output = !app.command_output.is_empty();
-    let output_lines = if app.command_mode || has_output {
-        app.command_output.len().min(5) as u16
-    } else {
-        0
-    };
-    let cmd_bar_height = (output_lines + 2).max(2); // output + separator + input line
+    // Output bar at bottom — always visible, dynamic height
+    let output_lines = app.command_output.len().min(5) as u16;
+    let out_height = output_lines.max(1); // at least 1 line so it's always visible
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),                  // Header bar
-            Constraint::Min(1),                     // Body
-            Constraint::Length(1),                  // Status bar
-            Constraint::Length(cmd_bar_height),     // Command bar (always visible)
+            Constraint::Length(1),             // Header bar (with Snap button)
+            Constraint::Min(1),                // Body
+            Constraint::Length(1),             // Status bar
+            Constraint::Length(out_height),    // Output bar (always visible)
         ])
         .split(area);
 
     render_header(frame, chunks[0], app);
     render_body(app, frame, chunks[1]);
     render_status_bar(frame, chunks[2], app);
-    render_command_bar(app, frame, chunks[3]);
+    render_output_bar(app, frame, chunks[3]);
 
     if app.show_help {
         super::help::render_help(frame, area);
@@ -46,26 +41,55 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
 // ── Header bar ─────────────────────────────────────────────────
 
-fn render_header(frame: &mut Frame, area: Rect, app: &App) {
+fn render_header(frame: &mut Frame, area: Rect, app: &mut App) {
     let title = format!(" ◆ Palimpsest — {} ", app.palin.name);
     let path = format!(" {}", app.palin.path.display());
+
+    // Snap button — right-aligned
+    let btn_text = " [ ◆ Snap ] ";
+    let btn_x = (area.width as usize).saturating_sub(btn_text.len()) as u16;
+    let btn_area = Rect::new(btn_x, area.y, btn_text.len() as u16, 1);
+
+    // Store for mouse-click detection
+    app.snap_button_area = btn_area;
 
     let text = Line::from(vec![
         Span::styled(title, Theme::header()),
         Span::styled(path, Theme::dim()),
     ]);
     frame.render_widget(Paragraph::new(text).left_aligned(), area);
+
+    // Render the Snap button on top
+    let btn_style = Style::new()
+        .bg(Theme::SURFACE)
+        .fg(Theme::GREEN)
+        .add_modifier(Modifier::BOLD);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(btn_text, btn_style))),
+        btn_area,
+    );
 }
 
 // ── Status bar ─────────────────────────────────────────────────
 
 fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
+    // Indicate which panel is focused
+    let focus_hint = match app.focus {
+        super::app::Focus::Timeline => " Timeline ",
+        super::app::Focus::Files => " Files ",
+    };
+
     let hints = [
         (" q ", "Quit"),
         (" ? ", "Help"),
-        (" j/k ", "Nav"),
+        ("↑↓", "Nav"),
+        ("←→", "Focus"),
         (" r ", "Reload"),
+        (" s ", "Snap"),
     ];
+
+    // Focus badge at the end
+    let focus_badge = Span::styled(focus_hint, Theme::header());
 
     let spans: Vec<Span> = hints
         .iter()
@@ -90,6 +114,7 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     let text = Line::from({
         let mut v: Vec<Span> = spans.into_iter().collect();
         v.push(info);
+        v.push(focus_badge);
         v
     });
 
@@ -125,7 +150,7 @@ fn render_timeline(app: &App, frame: &mut Frame, area: Rect) {
     let items = app.timeline_items();
     if items.is_empty() {
         frame.render_widget(
-            Paragraph::new("  No snapshots yet.\n  Press `:` then `snap`!")
+            Paragraph::new("  No snapshots yet.\n  Click [ ◆ Snap ] or press 's'!")
                 .style(Theme::dim())
                 .wrap(Wrap { trim: true }),
             inner,
@@ -344,29 +369,32 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_stateful_widget(list, vchunks[1], &mut fs);
 }
 
-// ── Command bar ────────────────────────────────────────────────
+// ── Output bar (replaces old command bar — no input line) ─────
 
-fn render_command_bar(app: &App, frame: &mut Frame, area: Rect) {
-    // Fill the entire command bar area with slate background
-    let bg_block = Block::default().style(
-        Style::new().bg(Theme::SURFACE),
-    );
+fn render_output_bar(app: &App, frame: &mut Frame, area: Rect) {
+    // Fill the entire area with slate background
+    let bg_block = Block::default().style(Style::new().bg(Theme::SURFACE));
     frame.render_widget(bg_block, area);
 
-    let output_count = app.command_output.len().min(5);
+    let count = app.command_output.len().min(5);
+    if count == 0 {
+        // Show a subtle idle message
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  ◆ Palimpsest — click Snap to take a snapshot",
+                Theme::dim().bg(Theme::SURFACE),
+            ))),
+            area,
+        );
+        return;
+    }
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(if output_count > 0 {
-            vec![Constraint::Length(output_count as u16), Constraint::Length(2)]
-        } else {
-            vec![Constraint::Min(0), Constraint::Length(2)]
-        })
-        .split(area);
-
-    // Output lines — newest at bottom, scrolling up (on slate bg)
-    if output_count > 0 {
-        let lines: Vec<Line> = app.command_output.iter().take(5).rev().map(|line| {
+    let lines: Vec<Line> = app
+        .command_output
+        .iter()
+        .take(5)
+        .rev()
+        .map(|line| {
             let style = if line.starts_with('✖') {
                 Theme::deleted()
             } else if line.starts_with('✦') || line.starts_with('●') {
@@ -376,89 +404,12 @@ fn render_command_bar(app: &App, frame: &mut Frame, area: Rect) {
             } else {
                 Theme::dim()
             };
-            // Override bg to SURFACE so output blends with the bar
             Line::from(Span::styled(format!(" {}", line), style.bg(Theme::SURFACE)))
-        }).collect();
-
-        frame.render_widget(
-            Paragraph::new(Text::from(lines)).style(Style::new().bg(Theme::SURFACE)),
-            chunks[0],
-        );
-    }
-
-    // Input line — with separator bar
-    let input_area = chunks[chunks.len() - 1];
-
-    // Separator line
-    let sep = Line::from(Span::styled(
-        format!(
-            "{}",
-            "─".repeat(input_area.width.saturating_sub(1) as usize)
-        ),
-        Theme::accent()
-            .bg(Theme::SURFACE)
-            .add_modifier(Modifier::DIM),
-    ));
-
-    let cursor_visible = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| (d.as_millis() / 500) % 2 == 0)
-        .unwrap_or(true);
-
-    // Build the input line spans (all on slate bg)
-    let input_spans = if !app.command_mode {
-        // Show a bright hint when not actively typing a command
-        vec![
-            Span::styled(" > ", Theme::prompt().bg(Theme::SURFACE)),
-            Span::styled(
-                "Press : for command",
-                Theme::fg()
-                    .bg(Theme::SURFACE)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]
-    } else if app.command_buffer.is_empty() {
-        let cursor = if cursor_visible { "█" } else { " " };
-        vec![
-            Span::styled(" > ", Theme::prompt().bg(Theme::SURFACE)),
-            Span::styled(cursor, Style::new().fg(Theme::FG).bg(Theme::SURFACE)),
-        ]
-    } else {
-        let before = &app.command_buffer[..app.command_cursor.min(app.command_buffer.len())];
-        let after = &app.command_buffer[app.command_cursor.min(app.command_buffer.len())..];
-
-        let mut spans = vec![
-            Span::styled(" > ", Theme::prompt().bg(Theme::SURFACE)),
-            Span::styled(before.to_string(), Style::new().fg(Theme::FG).bg(Theme::SURFACE)),
-        ];
-
-        if cursor_visible && after.is_empty() {
-            spans.push(Span::styled(after.to_string(), Style::new().fg(Theme::FG).bg(Theme::SURFACE)));
-            spans.push(Span::styled("█", Style::new().fg(Theme::FG).bg(Theme::SURFACE)));
-        } else if cursor_visible {
-            let ch = &after[..1];
-            let rest = &after[1..];
-            spans.push(Span::styled(format!("█{}", ch), Style::new().fg(Theme::FG).bg(Theme::SURFACE)));
-            spans.push(Span::styled(rest.to_string(), Style::new().fg(Theme::FG).bg(Theme::SURFACE)));
-        } else {
-            spans.push(Span::styled(after.to_string(), Style::new().fg(Theme::FG).bg(Theme::SURFACE)));
-        }
-        spans
-    };
-
-    // Render: separator on top line, input on bottom line
-    let input_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1)])
-        .split(input_area);
+        })
+        .collect();
 
     frame.render_widget(
-        Paragraph::new(sep).style(Style::new().bg(Theme::SURFACE)),
-        input_chunks[0],
-    );
-
-    frame.render_widget(
-        Paragraph::new(Line::from(input_spans)).style(Style::new().bg(Theme::SURFACE)),
-        input_chunks[1],
+        Paragraph::new(Text::from(lines)).style(Style::new().bg(Theme::SURFACE)),
+        area,
     );
 }

@@ -28,6 +28,7 @@ pub fn resolve_palin(name: Option<&str>) -> anyhow::Result<ResolvedPalin> {
 /// Execute `palin snap [name] [-m message]`
 pub fn execute(name: Option<&str>, message: Option<&str>) -> anyhow::Result<()> {
     let resolved = resolve_palin(name)?;
+    println!("● Scanning files...");
     let conn = storage::open_db(&resolved.name)?;
 
     // Clean up expired phantoms

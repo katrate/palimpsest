@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 /// ✦ Palimpsest — layer your project's history through time
 #[derive(Parser)]
-#[command(name = "palin", version = "0.1.0", about = "A CLI tool for layering your project's history through time")]
+#[command(name = "palin", version = env!("CARGO_PKG_VERSION"), about = "A CLI tool for layering your project's history through time")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
