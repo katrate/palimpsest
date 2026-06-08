@@ -69,11 +69,11 @@ Launch a full-screen terminal UI to browse your project's timeline visually.
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  ◆ my-website                        [GC] [Info] [Rename]   │
-│  Press / to search                                            │
+│  🔍 Search files...                                           │
 ├───────────────────────┬──────────────────────────────────────┤
 │  Timeline             │  Epoch #12 — 2026-06-08 14:32:00     │
 │                       │  "added error handling"              │
-│  > origin     ◆       │                                      │
+│  ▸ origin     ◆       │                                      │
 │    epoch-1            │  Files changed (12):                 │
 │    epoch-2            │    ~ src/main.rs      +15.3 KB       │
 │    epoch-3   🔒       │    ~ src/lib.rs        +4.2 KB       │
@@ -83,14 +83,17 @@ Launch a full-screen terminal UI to browse your project's timeline visually.
 │    epoch-7            │  Diff: epoch-6 vs epoch-12           │
 │    epoch-8            │    + fn authenticate()               │
 │    epoch-9            │    - fn login()                      │
-│    epoch-10           │    ~ fn validate()                   │
+│    epoch-10           │    - fn validate()                   │
 │    epoch-11           │                                      │
 │  ── Phantoms ──       │                                      │
-│    ○ phantom-1        │                                      │
+│    ◇ phantom-1        │                                      │
 ├───────────────────────┴──────────────────────────────────────┤
-│  q  Quit  ?  Help  p  Pick  i  Info  d  Diff  r  Reload     │
-│  s  Snap     3 ep | 1 ph | 12 files              Timeline    │
-│  ◆ Palimpsest — click Snap to take a snapshot                │
+│  q  Quit  ?  Help  p  Pick  i  Info  d  Diff  r  Rld        │
+│  s  Snap     3 ep · 1 ph · 12 files              Timeline    │
+│ ┌─ Messages ──────────────────────── [Clear] ─┐              │
+│ │  ◆ Snapshot of 'my-website' created         │              │
+│ │  ✓ Restored to epoch-10                     │              │
+│ └─────────────────────────────────────────────┘              │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -99,11 +102,11 @@ Launch a full-screen terminal UI to browse your project's timeline visually.
 | Section | Description |
 |---|---|
 | **Header** | Palin name + right-aligned action buttons: `[GC] [Info] [Rename] [◆ Snap]` |
-| **Search bar** | Type `/` to search files by name across the current epoch |
+| **Search bar** | Press `/` to search files by name across the current epoch |
 | **Timeline** (left) | Chronological list of epochs and phantoms with lock/restore/delete controls |
 | **Details** (right) | File tree for the selected epoch with status colors and file sizes |
 | **Status bar** | Keyboard shortcuts + epoch/phantom/file counts + focus indicator |
-| **Output bar** | Command output, confirmation prompts, and status messages |
+| **Messages** | Scrollable panel showing command history with `[Clear]` button |
 
 ### Mouse Controls
 
@@ -117,8 +120,9 @@ Launch a full-screen terminal UI to browse your project's timeline visually.
 | **Click** `[Info]` | Show storage statistics |
 | **Click** `[GC]` | Garbage collect unreferenced inks |
 | **Click** `[Rename]` | Rename the current palin |
-| **Scroll wheel** | Scroll diff view and file preview content |
+| **Scroll wheel** | Scroll diff view, file preview, and message history |
 | **Click search bar** | Focus the search input |
+| **Click `[Clear]`** | Clear the message history panel |
 
 ### Keyboard Shortcuts
 
@@ -134,6 +138,8 @@ Launch a full-screen terminal UI to browse your project's timeline visually.
 | **d** | Start file compare (on a file) → finish on epoch |
 | **s** | Take a snapshot |
 | **i** | Show storage info |
+| **o** | Scroll message history down |
+| **c** | Clear message history |
 | **p** | Open palin picker (switch projects) |
 | **r** | Reload timeline |
 | **?** | Show help overlay |
@@ -149,7 +155,7 @@ Launch a full-screen terminal UI to browse your project's timeline visually.
 Files are compared using the **Myers diff algorithm** via the `similar` crate. Results show:
 - **Green (+)** — Added lines
 - **Red (-)** — Deleted lines
-- **~** — Modified sections
+- **Red (-)** — Modified sections (shown as deletions)
 
 ### Palin Picker
 
@@ -158,6 +164,28 @@ Press **p** to open the palin switcher — a full-screen overlay listing all tra
 - **Enter** / **click** — Switch to it
 - **d** — Delete the selected palin (non-current only)
 - **Esc** — Close the picker
+
+---
+
+## Professional Theme
+
+The TUI features a professional dark design system inspired by modern frameworks (shadcn/ui, Tailwind):
+
+| Token | Hex | Usage |
+|---|---|---|
+| `BG_DEEPER` | `#0A0F1E` | Deepest background layer (footer, behind panels) |
+| `BG` | `#0F172A` | Primary background (navy) |
+| `SURFACE` | `#1E293B` | Elevated surfaces, header, panels |
+| `SURFACE2` | `#273548` | Hovered / selected row backgrounds |
+| `CYAN` | `#06B6D4` | Primary accent, selection, interactive elements |
+| `CYAN_BRIGHT` | `#22D3EE` | Bright highlights, selected text |
+| `VIOLET` | `#8B5CF6` | Secondary accent, tags, badges |
+| `GREEN` | `#22C55E` | Success, added files, confirm buttons |
+| `YELLOW` | `#F59E0B` | Warnings, modified files |
+| `RED` | `#EF4444` | Errors, deleted files, deny buttons |
+| `ORANGE` | `#F97316` | GC button, warnings |
+
+Diff view uses colorized backgrounds per line type for easier visual scanning.
 
 ---
 

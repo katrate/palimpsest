@@ -24,8 +24,13 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         return;
     }
 
-    let output_lines = app.command_output.len().min(5) as u16;
-    let out_height = output_lines.max(1);
+    let out_height = 8u16;
+
+    // Fill entire area with deep bg
+    frame.render_widget(
+        Block::default().style(Style::new().bg(Theme::BG_DEEPER)),
+        area,
+    );
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -52,13 +57,15 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 // ── Header bar ─────────────────────────────────────────────────
 
 fn render_header(frame: &mut Frame, area: Rect, app: &mut App) {
-    let gc_style = Style::new()
-        .bg(Theme::SURFACE)
-        .fg(ratatui::style::Color::Rgb(255, 120, 70))
-        .add_modifier(Modifier::BOLD);
+    // Full-width background
+    frame.render_widget(
+        Block::default().style(Style::new().bg(Theme::SURFACE).fg(Theme::FG)),
+        area,
+    );
+
+    let gc_style = Theme::btn_warning();
 
     if app.rename_mode {
-        // Show rename input in the header
         let prompt_text = format!(" Rename: {}_", app.rename_input);
         let gc_text = " [GC] ";
         let info_text = " [Info] ";
@@ -76,7 +83,7 @@ fn render_header(frame: &mut Frame, area: Rect, app: &mut App) {
         app.rename_button_area = Rect::default();
 
         let spans = vec![
-            Span::styled(prompt_text, Theme::fg().add_modifier(Modifier::BOLD)),
+            Span::styled(prompt_text, Theme::fg().bg(Theme::SURFACE).add_modifier(Modifier::BOLD)),
         ];
         frame.render_widget(Paragraph::new(Line::from(spans)).left_aligned(), area);
 
@@ -84,28 +91,18 @@ fn render_header(frame: &mut Frame, area: Rect, app: &mut App) {
             Paragraph::new(Line::from(Span::styled(gc_text, gc_style))),
             gc_area,
         );
-
-        let info_style = Style::new()
-            .bg(Theme::SURFACE)
-            .fg(Theme::CYAN)
-            .add_modifier(Modifier::BOLD);
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(info_text, info_style))),
+            Paragraph::new(Line::from(Span::styled(info_text, Theme::btn_secondary()))),
             info_area,
         );
-
-        let snap_style = Style::new()
-            .bg(Theme::SURFACE)
-            .fg(Theme::GREEN)
-            .add_modifier(Modifier::BOLD);
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(snap_text, snap_style))),
+            Paragraph::new(Line::from(Span::styled(snap_text, Theme::btn_primary()))),
             snap_area,
         );
         return;
     }
 
-    let title = format!(" ◆ {}", app.palin.name);
+    let title = format!(" ◆ {} ", app.palin.name);
     let path = format!(" {}", app.palin.path.display());
 
     // Buttons: GC | Info | Rename | Snap — right-aligned
@@ -130,40 +127,25 @@ fn render_header(frame: &mut Frame, area: Rect, app: &mut App) {
     app.info_button_area = info_area;
 
     let text = Line::from(vec![
-        Span::styled(title, Theme::header()),
-        Span::styled(path, Theme::dim()),
+        Span::styled(title, Theme::accent_bold().bg(Theme::SURFACE)),
+        Span::styled(path, Theme::dim().bg(Theme::SURFACE)),
     ]);
-    frame.render_widget(Paragraph::new(text).left_aligned(), area);
+    frame.render_widget(Paragraph::new(text).left_aligned().style(Style::new().bg(Theme::SURFACE)), area);
 
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(gc_text, gc_style))),
         gc_area,
     );
-
-    let info_style = Style::new()
-        .bg(Theme::SURFACE)
-        .fg(Theme::CYAN)
-        .add_modifier(Modifier::BOLD);
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(info_text, info_style))),
+        Paragraph::new(Line::from(Span::styled(info_text, Theme::btn_secondary()))),
         info_area,
     );
-
-    let rename_style = Style::new()
-        .bg(Theme::SURFACE)
-        .fg(Theme::YELLOW)
-        .add_modifier(Modifier::BOLD);
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(rename_text, rename_style))),
+        Paragraph::new(Line::from(Span::styled(rename_text, Theme::btn_neutral()))),
         rename_area,
     );
-
-    let snap_style = Style::new()
-        .bg(Theme::SURFACE)
-        .fg(Theme::GREEN)
-        .add_modifier(Modifier::BOLD);
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(snap_text, snap_style))),
+        Paragraph::new(Line::from(Span::styled(snap_text, Theme::btn_primary()))),
         snap_area,
     );
 }
@@ -171,49 +153,51 @@ fn render_header(frame: &mut Frame, area: Rect, app: &mut App) {
 // ── Search bar (persistent, below header) ──────────────────────
 
 fn render_search_bar(frame: &mut Frame, area: Rect, app: &mut App) {
-    // Background
-    let bg_style = Style::new().bg(Theme::SURFACE);
+    let bg_style = Style::new().bg(Theme::BG_DEEPER);
     frame.render_widget(Block::default().style(bg_style), area);
 
     let is_focused = app.focus == super::app::Focus::Search;
-
-    // Search input area
-    let input_x = area.x;
     let input_width = area.width;
-    let input_area = Rect::new(input_x, area.y, input_width, 1);
+    let input_area = Rect::new(area.x, area.y, input_width, 1);
     app.search_bar_area = input_area;
 
-    // Build the search query display
     let cursor_visible = is_focused;
     let query_display = if app.search_query.is_empty() {
         if is_focused {
-            "  Type to search...".to_string()
+            "  Search files...".to_string()
         } else {
-            "  Press / to search".to_string()
+            "  Press / to search files".to_string()
         }
     } else {
         format!("  {}", app.search_query)
     };
 
     let query_style = if is_focused {
-        Theme::fg().bg(Theme::SURFACE)
+        Theme::fg().bg(Theme::BG_DEEPER)
     } else {
-        Theme::dim().bg(Theme::SURFACE)
+        Theme::dim_deeper().bg(Theme::BG_DEEPER)
     };
 
-    let qd = query_display.clone();
-    let mut spans = vec![Span::styled(qd, query_style)];
+    let search_icon = if is_focused {
+        Span::styled(" 🔍 ", Theme::accent().bg(Theme::BG_DEEPER))
+    } else {
+        Span::styled("   ", Style::new().bg(Theme::BG_DEEPER))
+    };
 
-    // Cursor indicator (green block)
+    let mut spans = vec![
+        search_icon,
+        Span::styled(query_display, query_style),
+    ];
+
     if cursor_visible {
         spans.push(Span::styled(
             "█",
-            Style::new().bg(Theme::SURFACE).fg(Theme::GREEN).add_modifier(Modifier::DIM),
+            Style::new().bg(Theme::BG_DEEPER).fg(Theme::CYAN_BRIGHT).add_modifier(Modifier::DIM),
         ));
     }
 
     frame.render_widget(
-        Paragraph::new(Line::from(spans)).style(Style::new().bg(Theme::SURFACE)),
+        Paragraph::new(Line::from(spans)).style(Style::new().bg(Theme::BG_DEEPER)),
         input_area,
     );
 }
@@ -221,7 +205,9 @@ fn render_search_bar(frame: &mut Frame, area: Rect, app: &mut App) {
 // ── Status bar ─────────────────────────────────────────────────
 
 fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
-    // Indicate which panel is focused
+    let bg = Style::new().bg(Theme::BG_DEEPER);
+    frame.render_widget(Block::default().style(bg), area);
+
     let focus_hint = match app.focus {
         super::app::Focus::Timeline => " Timeline ",
         super::app::Focus::Files => " Files ",
@@ -234,41 +220,40 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         (" p ", "Pick"),
         (" i ", "Info"),
         (" d ", "Diff"),
-        (" r ", "Reload"),
+        (" r ", "Rld"),
         (" s ", "Snap"),
     ];
 
-    // Focus badge at the end
-    let focus_badge = Span::styled(focus_hint, Theme::header());
+    let focus_badge = Span::styled(focus_hint, Theme::focus_badge());
 
     let spans: Vec<Span> = hints
         .iter()
         .flat_map(|(key, desc)| {
             vec![
-                Span::styled(format!(" {} ", key), Theme::header()),
-                Span::styled(format!(" {}  ", desc), Theme::dim()),
+                Span::styled(format!(" {} ", key), Theme::keybind()),
+                Span::styled(format!(" {}  ", desc), Theme::keydesc()),
             ]
         })
         .collect();
 
     let info = Span::styled(
         format!(
-            "  {} ep | {} ph | {} files",
+            " {} ep · {} ph · {} files ",
             app.epochs.len(),
             app.phantoms.len(),
             app.current_entries.len()
         ),
-        Theme::dim(),
+        Theme::dim_deeper().bg(Theme::BG_DEEPER),
     );
 
-    let text = Line::from({
-        let mut v: Vec<Span> = spans.into_iter().collect();
-        v.push(info);
-        v.push(focus_badge);
-        v
-    });
+    let mut v: Vec<Span> = spans.into_iter().collect();
+    v.push(info);
+    v.push(focus_badge);
 
-    frame.render_widget(Paragraph::new(text).left_aligned(), area);
+    frame.render_widget(
+        Paragraph::new(Line::from(v)).left_aligned().style(bg),
+        area,
+    );
 }
 
 // ── Body: timeline left + detail right ─────────────────────────
@@ -279,6 +264,12 @@ fn render_body(app: &mut App, frame: &mut Frame, area: Rect) {
         .constraints([Constraint::Ratio(2, 5), Constraint::Ratio(3, 5)])
         .split(area);
 
+    // Fill body background
+    frame.render_widget(
+        Block::default().style(Style::new().bg(Theme::BG)),
+        area,
+    );
+
     render_timeline(app, frame, chunks[0]);
     render_detail(app, frame, chunks[1]);
 }
@@ -286,22 +277,28 @@ fn render_body(app: &mut App, frame: &mut Frame, area: Rect) {
 // ── Timeline panel (left) — manually rendered for position control ──
 
 fn render_timeline(app: &mut App, frame: &mut Frame, area: Rect) {
+    let border_style = if app.focus == super::app::Focus::Timeline {
+        Theme::border_active()
+    } else {
+        Theme::border()
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Theme::border())
+        .border_style(border_style)
         .title(" Timeline ")
-        .title_style(Theme::accent())
-        .style(Theme::base());
+        .title_style(Theme::accent_bold())
+        .style(Style::new().bg(Theme::BG));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Compute scroll BEFORE timeline_items() to avoid borrow conflicts
+    // Compute scroll
     let item_count = app.timeline_len();
     let epoch_count = app.epochs.len();
     let has_both = epoch_count > 0 && app.phantoms.len() > 0;
-    let header_rows = if has_both { 2usize } else { 0 }; // "Snapshots" + "Phantoms" headers
+    let header_rows = if has_both { 2usize } else { 0 };
     let item_visible = (inner.height as usize).max(1).saturating_sub(header_rows).max(1);
 
     let scroll = if item_count <= item_visible {
@@ -313,7 +310,7 @@ fn render_timeline(app: &mut App, frame: &mut Frame, area: Rect) {
     } else {
         app.selected_idx.saturating_sub(item_visible / 2)
     };
-    let end = (scroll + item_visible).min(item_count);        // Store for mouse-click detection
+    let end = (scroll + item_visible).min(item_count);
     app.timeline_list_area = inner;
     app.timeline_scroll = scroll;
 
@@ -329,49 +326,46 @@ fn render_timeline(app: &mut App, frame: &mut Frame, area: Rect) {
         return;
     }
 
-    // Helper to render a centered section header
     let render_header = |frame: &mut Frame, inner: Rect, vis_row: u16, text: &str| {
         let header_y = inner.y + vis_row;
-        let header_style = Style::new()
-            .fg(Theme::FG)
-            .bg(Theme::SURFACE)
-            .add_modifier(Modifier::DIM);
-        // Draw the full-width background first
         let bg_span = Span::styled(
             " ".repeat(inner.width as usize),
-            Style::new().bg(Theme::SURFACE),
+            Theme::section_header(),
         );
         frame.render_widget(
             Paragraph::new(Line::from(bg_span)),
             Rect::new(inner.x, header_y, inner.width, 1),
         );
-        // Draw centered header text on top
-        let header_x = inner.x + (inner.width.saturating_sub(text.len() as u16)) / 2;
+        let sep = Span::styled(" ── ", Theme::separator());
+        let label = Span::styled(text, Theme::dim_deeper());
+        let sep2 = Span::styled(" ──", Theme::separator());
+        // Build full-width filler
+        let filler_w = inner.width as usize - text.len() - 8;
+        let filler = Span::styled("─".repeat(filler_w.saturating_sub(0)), Theme::separator());
+        let header_x = 0;
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(text, header_style))),
-            Rect::new(header_x, header_y, text.len() as u16, 1),
+            Paragraph::new(Line::from(vec![sep, label, sep2, filler]))
+                .style(Style::new().bg(Theme::BG_DEEPER)),
+            Rect::new(inner.x + header_x, header_y, inner.width, 1),
         );
     };
 
-    // Separate visual row counter (accounts for section headers)
     let mut vis_row = 0u16;
 
-    // Render "Snapshots" header at the top when both groups exist and we're at the top
     if has_both && scroll == 0 {
-        render_header(frame, inner, vis_row, " ── Snapshots ── ");
+        render_header(frame, inner, vis_row, " Snapshots ");
         vis_row += 1;
     }
 
     for i in scroll..end {
-        // Render "Phantoms" section header when transitioning from epochs to phantoms
         if has_both && i == epoch_count {
-            render_header(frame, inner, vis_row, " ── Phantoms ── ");
+            render_header(frame, inner, vis_row, " Phantoms ");
             vis_row += 1;
         }
 
         let item = &items[i];
         let is_selected = i == app.selected_idx;
-        let prefix = if is_selected { " >" } else { "  " };
+        let prefix = if is_selected { " ▸" } else { "  " };
 
         let (display_text, base_style) = match item {
             TimelineItem::Epoch(epoch) => {
@@ -387,7 +381,7 @@ fn render_timeline(app: &mut App, frame: &mut Frame, area: Rect) {
                 } else if epoch.is_locked {
                     Theme::accent()
                 } else {
-                    Theme::base()
+                    Theme::body()
                 };
                 (text, st)
             }
@@ -397,7 +391,7 @@ fn render_timeline(app: &mut App, frame: &mut Frame, area: Rect) {
                 let hours = ttl.num_hours().max(0);
                 let mins = ttl.num_minutes().max(0) % 60;
                 let date = phantom.timestamp.with_timezone(&Local).format("%m/%d %H:%M");
-                let text = format!("{} ○ {}  {}  ({}h{}m)", prefix, name, date, hours, mins);
+                let text = format!("{} ◇ {}  {}  ({}h{}m)", prefix, name, date, hours, mins);
                 let st = if is_selected { Theme::selected() } else { Theme::dim() };
                 (text, st)
             }
@@ -408,7 +402,6 @@ fn render_timeline(app: &mut App, frame: &mut Frame, area: Rect) {
             text_style = text_style.add_modifier(Modifier::BOLD);
         }
 
-        // Build the row string with action buttons (lock + restore + delete)
         let is_epoch = i < epoch_count;
         let lock_indicator = if is_epoch {
             match item {
@@ -424,7 +417,6 @@ fn render_timeline(app: &mut App, frame: &mut Frame, area: Rect) {
         let buttons_len = buttons.chars().count() as u16;
         let max_label = (inner.width.saturating_sub(buttons_len).saturating_sub(1)) as usize;
         let label = if display_text.width() > max_label {
-            // Truncate at display width boundary — walk char by char
             let mut w = 0usize;
             let mut char_end = 0usize;
             for (ci, c) in display_text.char_indices() {
@@ -445,19 +437,33 @@ fn render_timeline(app: &mut App, frame: &mut Frame, area: Rect) {
         if i == app.selected_idx {
             selected_btn_start_x = btn_x;
         }
-        let row_text = format!("{}{}{}", label, " ".repeat(pad as usize), buttons);
+
+        // Style the buttons section differently
+        let btn_style = if is_selected {
+            Theme::timeline_action_hover()
+        } else {
+            Theme::timeline_action()
+        };
 
         let row_y = inner.y + vis_row;
         let row_rect = Rect::new(inner.x, row_y, inner.width, 1);
 
-        // Render the background (selection highlight manually)
-        let bg_color = if is_selected { Theme::SURFACE } else { Theme::BG };
+        let bg_color = if is_selected { Theme::SURFACE2 } else { Theme::BG };
+
+        // Render label with styling
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                &row_text,
+                &label,
                 text_style.bg(bg_color),
             ))),
             row_rect,
+        );
+
+        // Render buttons overlay on the right
+        let btn_rect = Rect::new(btn_x, row_y, buttons_len, 1);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(&buttons, btn_style.bg(bg_color)))),
+            btn_rect,
         );
 
         vis_row += 1;
@@ -477,7 +483,7 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
             .border_type(BorderType::Rounded)
             .border_style(Theme::border())
             .title(" Details ")
-            .title_style(Theme::accent())
+            .title_style(Theme::accent_bold())
             .style(Theme::base());
         frame.render_widget(
             Paragraph::new("  No data to display.")
@@ -488,13 +494,11 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
         return;
     }
 
-    // ── File preview view (when Enter pressed on a file) ───
     if app.show_preview {
         render_preview(app, frame, area);
         return;
     }
 
-    // ── Diff / Compare view ──────────────────────────────
     if !app.compare_result_lines.is_empty() || app.compare_error.is_some() {
         render_diff_view(app, frame, area);
         return;
@@ -502,16 +506,15 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
 
     let item = items[app.selected_idx];
 
-    // Build the detail header
     let (title, subtitle, badge) = match item {
         TimelineItem::Epoch(epoch) => {
             let name = epoch.display_name();
             let date = epoch.timestamp.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S");
             let msg = epoch.message.as_deref().unwrap_or("(no message)");
             let badge_text = if epoch.is_locked {
-                " 🔒 LOCKED "
+                "  🔒 LOCKED  "
             } else if epoch.is_origin {
-                " ◆ ORIGIN "
+                "  ◆ ORIGIN  "
             } else {
                 ""
             };
@@ -544,10 +547,16 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
         title_text.push_str(&format!(" — comparing '{}'", app.compare_file_path));
     }
 
+    let border_style = if app.focus == super::app::Focus::Files {
+        Theme::border_active()
+    } else {
+        Theme::border()
+    };
+
     let header_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Theme::border())
+        .border_style(border_style)
         .title(format!(" {} ", title_text))
         .title_style(Theme::accent_bold())
         .style(Theme::base());
@@ -555,22 +564,19 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
     let inner = header_block.inner(area);
     frame.render_widget(header_block, area);
 
-    // Subtitle + file list
     let vchunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(1)])
         .split(inner);
 
-    // Subtitle
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(subtitle, Theme::dim()))),
         vchunks[0],
     );
 
-    // Store the detail list area for click detection
     app.detail_list_area = vchunks[1];
 
-    // File tree (hierarchical with expand/collapse) — filtered by search
+    // File tree
     let rows = app.filtered_visible_rows();
     if rows.is_empty() {
         frame.render_widget(
@@ -583,8 +589,6 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
     let list_height = vchunks[1].height.saturating_sub(1) as usize;
     let max_visible = list_height.max(1);
 
-    // Convert from filtered list indices back to original indices
-    // to maintain selected_file_idx alignment
     let filtered_count = rows.len();
     let adj_sel = app.selected_file_idx.min(filtered_count.saturating_sub(1));
 
@@ -605,13 +609,12 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
         let is_selected = i + scroll_offset == adj_sel;
 
         if row.is_dir {
-            // Show colored status dot for directories with modified children
             let marker = if row.is_expanded { "▾" } else { "▸" };
             let dot_color = match row.status {
                 Some(crate::types::FileStatus::Added) => Theme::GREEN,
                 Some(crate::types::FileStatus::Modified) => Theme::YELLOW,
                 Some(crate::types::FileStatus::Deleted) => Theme::RED,
-                _ => Theme::FG,
+                _ => Theme::FG_SOFT,
             };
             let dir_style = if is_selected { Theme::selected() } else { Theme::accent() };
             return ListItem::new(Line::from(vec![
@@ -627,7 +630,7 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
         let status_style = app.status_color_for(row);
         let name_style = if is_selected { Theme::selected() } else { status_style };
 
-        let name_max = (vchunks[1].width as usize).saturating_sub(18); // 4=indent+status, 14=size
+        let name_max = (vchunks[1].width as usize).saturating_sub(18);
         let display_name = if row.name.len() > name_max {
             format!("{}…", &row.name[..name_max.saturating_sub(1)])
         } else {
@@ -639,7 +642,6 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
             Span::styled(display_name, name_style),
         ];
 
-        // File size
         if let Some(s) = row.file_size {
             let size_str = if s > 1_048_576 {
                 format!(" {:>7.1} MB", s as f64 / 1_048_576.0)
@@ -648,7 +650,7 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
             } else {
                 format!(" {:>7} B", s)
             };
-            spans.push(Span::styled(size_str, Theme::dim()));
+            spans.push(Span::styled(size_str, Theme::dim_deeper()));
         }
 
         ListItem::new(Line::from(spans))
@@ -662,7 +664,7 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
     frame.render_stateful_widget(list, vchunks[1], &mut fs);
 }
 
-// ── File preview (content shown inline when pressing Enter) ──
+// ── File preview ─────────────────────────────────────────────
 
 fn render_preview(app: &mut App, frame: &mut Frame, area: Rect) {
     let file_path = if let Some(row) = app.visible_rows.get(app.selected_file_idx) {
@@ -674,7 +676,7 @@ fn render_preview(app: &mut App, frame: &mut Frame, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Theme::border())
+        .border_style(Theme::border_active())
         .title(format!(" Preview — {} ", file_path))
         .title_style(Theme::accent_bold())
         .style(Theme::base());
@@ -682,22 +684,20 @@ fn render_preview(app: &mut App, frame: &mut Frame, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Scrolling for long files
     let max_lines = inner.height.saturating_sub(1) as usize;
     let total = app.preview_content.len();
     let scroll = app.preview_scroll.min(total.saturating_sub(max_lines).max(0));
 
-    // Scroll hint
     let scroll_hint = if total > max_lines {
         let pct = if total > 0 { (scroll * 100) / total } else { 0 };
-        format!("  [{}% scrolled — ↑/↓]", pct)
+        format!("  [{}% scrolled] ", pct)
     } else {
         String::new()
     };
 
     if !scroll_hint.is_empty() {
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(&scroll_hint, Theme::dim()))),
+            Paragraph::new(Line::from(Span::styled(&scroll_hint, Theme::scroll_hint()))),
             Rect::new(inner.x, inner.y, inner.width, 1),
         );
         let content_area = Rect::new(inner.x, inner.y + 1, inner.width, inner.height.saturating_sub(1));
@@ -721,7 +721,7 @@ fn render_preview(app: &mut App, frame: &mut Frame, area: Rect) {
     }
 }
 
-// ── Diff view (shown when comparing file between epochs) ───────
+// ── Diff view ─────────────────────────────────────────────
 
 fn render_diff_view(app: &App, frame: &mut Frame, area: Rect) {
     let file_path = &app.compare_file_path;
@@ -735,7 +735,7 @@ fn render_diff_view(app: &App, frame: &mut Frame, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Theme::border())
+        .border_style(Theme::border_active())
         .title(title)
         .title_style(Theme::accent_bold())
         .style(Theme::base());
@@ -769,14 +769,13 @@ fn render_diff_view(app: &App, frame: &mut Frame, area: Rect) {
     let total = app.compare_result_lines.len();
     let scroll = app.diff_scroll.min(total.saturating_sub(max_lines).max(0));
 
-    // Show scroll indicator if content exceeds visible area
     let scroll_hint = if total > max_lines {
         let pct = if total > 0 {
             (scroll * 100) / total
         } else {
             0
         };
-        format!("  [{}% scrolled — ↑/↓ to navigate]", pct)
+        format!("  [{}% scrolled] ", pct)
     } else {
         String::new()
     };
@@ -787,40 +786,25 @@ fn render_diff_view(app: &App, frame: &mut Frame, area: Rect) {
         .skip(scroll)
         .take(max_lines)
         .map(|dl| {
-            let prefix = " ";
             let (marker, style) = match dl.line_type {
-                super::app::DiffLineType::Added => {
-                    ("+", Theme::added())
-                }
-                super::app::DiffLineType::Deleted => {
-                    ("-", Theme::deleted())
-                }
-                super::app::DiffLineType::Replaced => {
-                    // Replaced lines are removed content — show as deletion
-                    ("-", Theme::deleted())
-                }
-                super::app::DiffLineType::Same => {
-                    (" ", Style::default().fg(Theme::FG))
-                }
+                super::app::DiffLineType::Added => ("+", Theme::diff_added()),
+                super::app::DiffLineType::Deleted => ("-", Theme::diff_deleted()),
+                super::app::DiffLineType::Replaced => ("-", Theme::diff_deleted()),
+                super::app::DiffLineType::Same => (" ", Theme::diff_same()),
             };
             Line::from(Span::styled(
-                format!("{}{} {}", prefix, marker, dl.content),
+                format!(" {} {}", marker, dl.content),
                 style,
             ))
         })
         .collect();
 
-    // First render the scroll hint at the bottom, then the diff content
-    // We use a vertical split: one line for hint, rest for content
     if !scroll_hint.is_empty() {
-        // Render the hint line at the very top of inner
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(&scroll_hint, Theme::dim()))),
+            Paragraph::new(Line::from(Span::styled(&scroll_hint, Theme::scroll_hint()))),
             Rect::new(inner.x, inner.y, inner.width, 1),
         );
-        // Shift content down by 1
         let content_area = Rect::new(inner.x, inner.y + 1, inner.width, inner.height.saturating_sub(1));
-        // Render as much content as fits (re-calculate for shifted area)
         let content_lines: Vec<Line> = app
             .compare_result_lines
             .iter()
@@ -828,14 +812,10 @@ fn render_diff_view(app: &App, frame: &mut Frame, area: Rect) {
             .take(content_area.height as usize)
             .map(|dl| {
                 let (marker, style) = match dl.line_type {
-                    super::app::DiffLineType::Added => ("+", Theme::added()),
-                    super::app::DiffLineType::Deleted => ("-", Theme::deleted()),
-                    super::app::DiffLineType::Replaced => {
-                        ("-", Theme::deleted())
-                    }
-                    super::app::DiffLineType::Same => {
-                        (" ", Style::default().fg(Theme::FG))
-                    }
+                    super::app::DiffLineType::Added => ("+", Theme::diff_added()),
+                    super::app::DiffLineType::Deleted => ("-", Theme::diff_deleted()),
+                    super::app::DiffLineType::Replaced => ("-", Theme::diff_deleted()),
+                    super::app::DiffLineType::Same => (" ", Theme::diff_same()),
                 };
                 Line::from(Span::styled(
                     format!(" {} {}", marker, dl.content),
@@ -855,29 +835,27 @@ fn render_diff_view(app: &App, frame: &mut Frame, area: Rect) {
     }
 }
 
-// ── Output bar (with optional confirmation prompt) ───────────
-
 // ── Palin picker overlay ──────────────────────────────────
 
 fn render_picker(app: &mut App, frame: &mut Frame, area: Rect) {
-    // Dimmed background
+    // Dimmed overlay
     frame.render_widget(
-        Block::default().style(Style::new().bg(ratatui::style::Color::Rgb(0, 0, 0)).fg(Theme::FG)),
+        Block::default().style(Style::new().bg(Theme::BG_DEEPER).fg(Theme::FG)),
         area,
     );
 
     // Centered popup
-    let popup_w = 60u16.min(area.width.saturating_sub(4));
-    let popup_h = (app.all_palins.len() as u16 + 5).min(area.height.saturating_sub(4));
+    let popup_w = 64u16.min(area.width.saturating_sub(4));
+    let popup_h = (app.all_palins.len() as u16 + 6).min(area.height.saturating_sub(4));
     let popup_x = area.x + (area.width - popup_w) / 2;
     let popup_y = area.y + (area.height - popup_h) / 2;
     let popup = Rect::new(popup_x, popup_y, popup_w, popup_h);
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(Theme::YELLOW))
-        .title(" Palins ")
+        .border_type(BorderType::Thick)
+        .border_style(Style::new().fg(Theme::VIOLET))
+        .title(" ◆ Palins ")
         .title_style(Theme::accent_bold())
         .style(Style::new().bg(Theme::BG));
 
@@ -888,12 +866,11 @@ fn render_picker(app: &mut App, frame: &mut Frame, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             " Click to switch · [d] to delete · [Esc] to close",
-            Theme::dim(),
+            Theme::dim_deeper(),
         ))),
         Rect::new(inner.x, inner.y, inner.width, 1),
     );
 
-    // List of palins
     let list_start_y = inner.y + 1;
     let max_visible = inner.height.saturating_sub(1) as usize;
     let scroll = if app.picker_selected >= max_visible {
@@ -913,36 +890,33 @@ fn render_picker(app: &mut App, frame: &mut Frame, area: Rect) {
         let row_y = list_start_y + (i - scroll) as u16;
         let row_rect = Rect::new(inner.x, row_y, inner.width, 1);
 
-        let bg_color = if is_selected { Theme::SURFACE } else { Theme::BG };
+        let bg_color = if is_selected { Theme::SURFACE2 } else { Theme::BG };
         let name_style = if is_current {
-            Style::new().fg(Theme::GREEN).add_modifier(Modifier::BOLD)
+            Theme::picker_current()
         } else if is_selected {
-            Style::new().fg(Theme::YELLOW).add_modifier(Modifier::BOLD)
+            Style::new().fg(Theme::YELLOW_SOFT).add_modifier(Modifier::BOLD)
         } else {
-            Theme::fg()
+            Theme::fg().bg(Theme::BG)
         };
 
-        // Truncate path
-        let max_path_w = (inner.width as usize).saturating_sub(name.len() + 20);
+        let max_path_w = (inner.width as usize).saturating_sub(name.len() + 22);
         let path_display = if path_str.len() > max_path_w {
             format!("…{}", &path_str[path_str.len().saturating_sub(max_path_w.saturating_sub(1))..])
         } else {
             path_str.clone()
         };
 
-        // Delete button (only for non-current)
         let delete_btn = if is_current { "" } else { " [✕]" };
         let current_tag = if is_current { " ◆" } else { "  " };
 
         let mut row_text = format!("{}{} {}  {}{}",
-            if is_selected { ">" } else { " " },
+            if is_selected { "▸" } else { " " },
             current_tag,
             name,
             path_display,
             delete_btn
         );
 
-        // Truncate to fit
         if row_text.len() > inner.width as usize {
             row_text = format!("{}…", &row_text[..inner.width.saturating_sub(2) as usize]);
         }
@@ -955,7 +929,7 @@ fn render_picker(app: &mut App, frame: &mut Frame, area: Rect) {
 
     // Delete confirmation overlay
     if let Some(ref name) = app.picker_confirm_delete {
-        let confirm_w = 40u16;
+        let confirm_w = 44u16;
         let confirm_h = 3u16;
         let confirm_x = area.x + (area.width - confirm_w) / 2;
         let confirm_y = area.y + area.height / 2;
@@ -981,8 +955,6 @@ fn render_picker(app: &mut App, frame: &mut Frame, area: Rect) {
             Rect::new(confirm_inner.x, confirm_inner.y, confirm_inner.width, 1),
         );
 
-        let yes_style = Style::new().bg(Theme::RED).fg(Theme::BG).add_modifier(Modifier::BOLD);
-        let no_style = Style::new().bg(Theme::GREEN).fg(Theme::BG).add_modifier(Modifier::BOLD);
         let btn_y = confirm_inner.y + 1;
         let mid_x = confirm_inner.x + confirm_inner.width / 2;
         let yes_area = Rect::new(mid_x - 8, btn_y, 6, 1);
@@ -990,22 +962,39 @@ fn render_picker(app: &mut App, frame: &mut Frame, area: Rect) {
         app.picker_confirm_yes_area = yes_area;
         app.picker_confirm_no_area = no_area;
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(" [Yes] ", yes_style))),
+            Paragraph::new(Line::from(Span::styled(" [Yes] ", Theme::btn_confirm()))),
             yes_area,
         );
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(" [No] ", no_style))),
+            Paragraph::new(Line::from(Span::styled(" [No] ", Theme::btn_deny()))),
             no_area,
         );
     }
 }
 
-fn render_output_bar(app: &mut App, frame: &mut Frame, area: Rect) {
-    // Fill the entire area with slate background
-    let bg_block = Block::default().style(Style::new().bg(Theme::SURFACE));
-    frame.render_widget(bg_block, area);
+// ── Output panel (scrollable, with clear button) ───────────
 
-    // If there's a pending action, show a confirmation prompt
+fn render_output_bar(app: &mut App, frame: &mut Frame, area: Rect) {
+    // Store the full output area for mouse click detection
+    app.output_bar_area = area;
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Theme::border())
+        .title(" Messages ")
+        .title_style(Theme::dim().fg(Theme::DIM))
+        .style(Style::new().bg(Theme::BG_DEEPER));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let clear_text = " [Clear] ";
+    let clear_style = Theme::btn_neutral();
+    let clear_area = Rect::new(inner.x + inner.width.saturating_sub(clear_text.len() as u16), inner.y, clear_text.len() as u16, 1);
+    app.output_clear_area = clear_area;
+
+    // If there's a pending action, show a confirmation prompt inside the panel
     if let Some(ref action) = app.pending_action {
         let prompt = format!(
             "  {} {}?  ",
@@ -1020,52 +1009,105 @@ fn render_output_bar(app: &mut App, frame: &mut Frame, area: Rect) {
         let no_text = " [ No ] ";
 
         let prompt_len = prompt.len() as u16;
-        let yes_x = area.x + prompt_len;
+        let yes_x = inner.x + prompt_len;
         let no_x = yes_x + yes_text.len() as u16;
 
-        // Store button areas for click detection
-        app.confirm_yes_area = Rect::new(yes_x, area.y, yes_text.len() as u16, 1);
-        app.confirm_no_area = Rect::new(no_x, area.y, no_text.len() as u16, 1);
-
-        let yes_style = Style::new()
-            .bg(Theme::GREEN)
-            .fg(Theme::BG)
-            .add_modifier(Modifier::BOLD);
-        let no_style = Style::new()
-            .bg(Theme::RED)
-            .fg(Theme::FG)
-            .add_modifier(Modifier::BOLD);
+        app.confirm_yes_area = Rect::new(yes_x, inner.y, yes_text.len() as u16, 1);
+        app.confirm_no_area = Rect::new(no_x, inner.y, no_text.len() as u16, 1);
 
         let spans = vec![
-            Span::styled(prompt, Theme::fg().bg(Theme::SURFACE)),
-            Span::styled(yes_text, yes_style),
-            Span::styled(no_text, no_style),
+            Span::styled(prompt, Theme::fg().bg(Theme::BG_DEEPER)),
+            Span::styled(yes_text, Theme::btn_confirm()),
+            Span::styled(no_text, Theme::btn_deny()),
         ];
 
         frame.render_widget(
-            Paragraph::new(Line::from(spans)).style(Style::new().bg(Theme::SURFACE)),
-            area,
+            Paragraph::new(Line::from(spans)).style(Style::new().bg(Theme::BG_DEEPER)),
+            inner,
         );
         return;
     }
 
-    let count = app.command_output.len().min(5);
-    if count == 0 {
+    // GC confirmation
+    if app.pending_gc {
+        let prompt = Span::styled(
+            "  Run garbage collection?  ",
+            Theme::fg().bg(Theme::BG_DEEPER),
+        );
+        let yes_text = " [ Yes ] ";
+        let no_text = " [ No ] ";
+
+        let prompt_len = "  Run garbage collection?  ".len() as u16;
+        let yes_x = inner.x + prompt_len;
+        let no_x = yes_x + yes_text.len() as u16;
+
+        app.confirm_yes_area = Rect::new(yes_x, inner.y, yes_text.len() as u16, 1);
+        app.confirm_no_area = Rect::new(no_x, inner.y, no_text.len() as u16, 1);
+
+        let spans = vec![
+            prompt,
+            Span::styled(yes_text, Theme::btn_confirm()),
+            Span::styled(no_text, Theme::btn_deny()),
+        ];
+
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).style(Style::new().bg(Theme::BG_DEEPER)),
+            inner,
+        );
+        return;
+    }
+
+    let total = app.command_output.len();
+    if total == 0 {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                "  ◆ Palimpsest — click Snap to take a snapshot",
-                Theme::dim().bg(Theme::SURFACE),
+                "  ◆ Palimpsest — [o] focus output · [c] clear · [s] snap · [p] pick · [?] help",
+                Theme::dim_deeper().bg(Theme::BG_DEEPER),
             ))),
-            area,
+            inner,
         );
         return;
     }
 
-    let lines: Vec<Line> = app
-        .command_output
-        .iter()
-        .take(5)
-        .rev()
+    // Scrolling for long output
+    let max_lines = inner.height.saturating_sub(1) as usize;
+    let scroll = app.output_scroll.min(total.saturating_sub(max_lines).max(0));
+
+    // Scroll indicator
+    let scroll_hint = if total > max_lines {
+        let pct = if total > 0 { (scroll * 100) / total } else { 0 };
+        format!("  {} msgs · [{}%] ", total, pct)
+    } else {
+        String::new()
+    };
+
+    // Render clear button on the right of the top line
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(clear_text, clear_style))),
+        clear_area,
+    );
+
+    if !scroll_hint.is_empty() {
+        // Render scroll hint on top line
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(&scroll_hint, Theme::scroll_hint()))),
+            Rect::new(inner.x, inner.y, inner.width.saturating_sub(clear_text.len() as u16), 1),
+        );
+        let content_area = Rect::new(inner.x, inner.y + 1, inner.width, inner.height.saturating_sub(1));
+        let lines: Vec<Line> = render_output_lines(app, scroll, content_area.height as usize);
+        frame.render_widget(Paragraph::new(Text::from(lines)), content_area);
+    } else {
+        let lines: Vec<Line> = render_output_lines(app, scroll, max_lines);
+        frame.render_widget(Paragraph::new(Text::from(lines)), inner);
+    }
+}
+
+fn render_output_lines<'a>(app: &'a App, scroll: usize, max_lines: usize) -> Vec<Line<'a>> {
+    app.command_output
+        .iter()              // newest first (index 0 = newest)
+        .skip(scroll)        // skip `scroll` newest messages
+        .take(max_lines)     // take next `max_lines` messages
+        .rev()               // reverse: oldest-in-window at top, newest at bottom
         .map(|line| {
             let style = if line.starts_with('✖') {
                 Theme::deleted()
@@ -1076,12 +1118,7 @@ fn render_output_bar(app: &mut App, frame: &mut Frame, area: Rect) {
             } else {
                 Theme::dim()
             };
-            Line::from(Span::styled(format!(" {}", line), style.bg(Theme::SURFACE)))
+            Line::from(Span::styled(format!(" {}", line), style.bg(Theme::BG_DEEPER)))
         })
-        .collect();
-
-    frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::new().bg(Theme::SURFACE)),
-        area,
-    );
+        .collect()
 }

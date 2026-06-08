@@ -73,6 +73,9 @@ pub struct App {
     pub search_query: String,
     pub search_cursor: usize,
     pub search_bar_area: Rect,
+    pub output_scroll: usize,
+    pub output_clear_area: Rect,
+    pub output_bar_area: Rect,
     pub compare_mode: bool,
     pub compare_file_path: String,
     pub compare_source_idx: usize,
@@ -132,6 +135,9 @@ impl App {
             search_query: String::new(),
             search_cursor: 0,
             search_bar_area: Rect::default(),
+            output_scroll: 0,
+            output_clear_area: Rect::default(),
+            output_bar_area: Rect::default(),
 
             compare_mode: false,
             compare_file_path: String::new(),
@@ -397,7 +403,6 @@ impl App {
                         self.running = false;
                     }
                     KeyCode::Esc => {
-                        // Clear diff view if active, otherwise quit
                         if !self.compare_result_lines.is_empty() || self.compare_error.is_some() || self.compare_mode {
                             self.compare_result_lines.clear();
                             self.compare_error = None;
@@ -549,11 +554,24 @@ impl App {
                     KeyCode::Char('s') => {
                         self.run_snap();
                     }
+                    KeyCode::Char('o') | KeyCode::Char('O') => {
+                        if !self.command_output.is_empty() {
+                            let max = self.command_output.len().saturating_sub(1);
+                            if self.output_scroll < max {
+                                self.output_scroll += 1;
+                            }
+                        }
+                    }
+                    KeyCode::Char('c') | KeyCode::Char('C') => {
+                        self.clear_output();
+                    }
                     _ => {}
                 }
             }
             Event::Mouse(MouseEvent {
                 kind: MouseEventKind::ScrollDown,
+                column,
+                row,
                 ..
             }) => {
                 // Scroll wheel only works for diff and preview content
@@ -566,13 +584,26 @@ impl App {
                     if self.preview_scroll + 1 < self.preview_content.len() {
                         self.preview_scroll += 1;
                     }
+                } else {
+                    let ob = self.output_bar_area;
+                    if ob.height > 0 && column >= ob.x && column < ob.x + ob.width
+                        && row >= ob.y && row < ob.y + ob.height
+                        && !self.command_output.is_empty()
+                    {
+                        let max = self.command_output.len().saturating_sub(1);
+                        if self.output_scroll < max {
+                            self.output_scroll += 1;
+                        }
+                    }
                 }
             }
             Event::Mouse(MouseEvent {
                 kind: MouseEventKind::ScrollUp,
+                column,
+                row,
                 ..
             }) => {
-                // Scroll wheel only works for diff and preview content
+                // Scroll wheel only works for diff, preview, and output content
                 if !self.compare_result_lines.is_empty() {
                     if self.diff_scroll > 0 {
                         self.diff_scroll -= 1;
@@ -580,6 +611,15 @@ impl App {
                 } else if self.show_preview && !self.preview_content.is_empty() {
                     if self.preview_scroll > 0 {
                         self.preview_scroll -= 1;
+                    }
+                } else {
+                    let ob = self.output_bar_area;
+                    if ob.height > 0
+                        && !self.command_output.is_empty()
+                    {
+                        if self.output_scroll > 0 {
+                            self.output_scroll -= 1;
+                        }
                     }
                 }
             }
@@ -684,6 +724,15 @@ impl App {
                     && row >= rbtn.y && row < rbtn.y + rbtn.height
                 {
                     self.begin_rename();
+                    return Ok(());
+                }
+
+                // Check output clear button
+                let clr = self.output_clear_area;
+                if clr.width > 0 && column >= clr.x && column < clr.x + clr.width
+                    && row >= clr.y && row < clr.y + clr.height
+                {
+                    self.clear_output();
                     return Ok(());
                 }
 
@@ -1033,6 +1082,7 @@ impl App {
         if self.command_output.len() > 100 {
             self.command_output.pop();
         }
+        self.output_scroll = 0;
     }
 
     // ── Search bar ─────────────────────────────────────
@@ -1086,6 +1136,11 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    pub fn clear_output(&mut self) {
+        self.command_output.clear();
+        self.output_scroll = 0;
     }
 
     pub fn clear_search(&mut self) {

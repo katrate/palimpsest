@@ -2,7 +2,7 @@
 name = "palin"
 version = "0.5.0"
 edition = "2024"
-description = "A CLI + TUI tool for layering your project's history through time"
+description = "✦ Palimpsest — Git-inspired versioned snapshot browser with a professional TUI. Track, browse, compare, and restore your project's history through time."
 authors = ["Palimpsest"]
 
 [dependencies]
