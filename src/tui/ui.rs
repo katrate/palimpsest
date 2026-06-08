@@ -1,7 +1,7 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::Modifier,
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{
         Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap,
     },
@@ -15,21 +15,36 @@ use super::theme::Theme;
 pub fn render(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
 
-    // ── Outer vertical split: header / body / footer ──────────
+    // Command bar takes bottom space when active
+    let (main_area, cmd_area) = if app.command_mode {
+        let cmd_h = (app.command_output.len().min(5) + 2) as u16;
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(cmd_h.max(3))])
+            .split(area);
+        (chunks[0], Some(chunks[1]))
+    } else {
+        (area, None)
+    };
+
+    // Main vertical split: header / body / footer
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),    // Header
-            Constraint::Min(1),       // Body
-            Constraint::Length(1),    // Footer
+            Constraint::Length(1), // Header bar
+            Constraint::Min(1),    // Body
+            Constraint::Length(1), // Status bar
         ])
-        .split(area);
+        .split(main_area);
 
     render_header(frame, chunks[0], app);
     render_body(app, frame, chunks[1]);
-    render_footer(frame, chunks[2], app);
+    render_status_bar(frame, chunks[2], app);
 
-    // ── Help overlay (on top of everything) ───────────────────
+    if let Some(cmd_area) = cmd_area {
+        render_command_bar(app, frame, cmd_area);
+    }
+
     if app.show_help {
         super::help::render_help(frame, area);
     }
@@ -48,34 +63,39 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(text).left_aligned(), area);
 }
 
-// ── Footer bar ─────────────────────────────────────────────────
+// ── Status bar ─────────────────────────────────────────────────
 
-fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
-    let hints = vec![
+fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
+    let hints = [
         (" q ", "Quit"),
+        (" : ", "Cmd"),
         (" ? ", "Help"),
         (" j/k ", "Nav"),
         (" r ", "Reload"),
     ];
 
     let spans: Vec<Span> = hints
-        .into_iter()
+        .iter()
         .flat_map(|(key, desc)| {
             vec![
                 Span::styled(format!(" {} ", key), Theme::header()),
-                Span::styled(format!(" {} ", desc), Theme::dim()),
+                Span::styled(format!(" {}  ", desc), Theme::dim()),
             ]
         })
         .collect();
 
-    let epoch_count = app.epochs.len();
     let info = Span::styled(
-        format!("  {} epochs | {} phantoms ", epoch_count, app.phantoms.len()),
+        format!(
+            "  {} ep | {} ph | {} files",
+            app.epochs.len(),
+            app.phantoms.len(),
+            app.current_entries.len()
+        ),
         Theme::dim(),
     );
 
     let text = Line::from({
-        let mut v = spans;
+        let mut v: Vec<Span> = spans.into_iter().collect();
         v.push(info);
         v
     });
@@ -83,15 +103,12 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(text).left_aligned(), area);
 }
 
-// ── Body: left timeline + right detail ─────────────────────────
+// ── Body: timeline left + detail right ─────────────────────────
 
 fn render_body(app: &mut App, frame: &mut Frame, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Ratio(1, 3),  // Timeline
-            Constraint::Ratio(2, 3),  // Detail + diff
-        ])
+        .constraints([Constraint::Ratio(2, 5), Constraint::Ratio(3, 5)])
         .split(area);
 
     render_timeline(app, frame, chunks[0]);
@@ -106,57 +123,72 @@ fn render_timeline(app: &App, frame: &mut Frame, area: Rect) {
         .border_type(BorderType::Rounded)
         .border_style(Theme::border())
         .title(" Timeline ")
-        .title_style(Theme::accent());
+        .title_style(Theme::accent())
+        .style(Theme::base());
 
     let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    // Build items
     let items = app.timeline_items();
+    if items.is_empty() {
+        frame.render_widget(
+            Paragraph::new("  No snapshots yet.\n  Press `:` then `snap`!")
+                .style(Theme::dim())
+                .wrap(Wrap { trim: true }),
+            inner,
+        );
+        return;
+    }
+
     let list_items: Vec<ListItem> = items.iter().enumerate().map(|(i, item)| {
         let is_selected = i == app.selected_idx;
+        let prefix = if is_selected { " ▶" } else { "  " };
+
         let (label, style) = match item {
             TimelineItem::Epoch(epoch) => {
                 let name = epoch.display_name();
                 let msg = epoch.message.as_deref().unwrap_or("");
                 let locked = if epoch.is_locked { " 🔒" } else { "" };
                 let date = epoch.timestamp.format("%m/%d %H:%M");
-                if is_selected {
-                    (format!(" ▶ {}  {}  {}{}", name, date, msg, locked), Theme::selected())
-                } else if epoch.is_origin {
-                    (format!("   {}  {}  {}{}", name, date, msg, locked), Theme::accent())
+
+                let labels = if epoch.is_origin {
+                    format!("{} {}  {}  {}{}", prefix, name, date, msg, locked)
                 } else {
-                    (format!("   {}  {}  {}{}", name, date, msg, locked), Theme::base())
+                    format!("{} {}  {}  {}{}", prefix, name, date, msg, locked)
+                };
+
+                if is_selected {
+                    (labels, Theme::selected())
+                } else if epoch.is_origin {
+                    (labels, Theme::origin_badge())
+                } else if epoch.is_locked {
+                    (labels, Theme::accent())
+                } else {
+                    (labels, Theme::base())
                 }
             }
             TimelineItem::Phantom(phantom) => {
                 let name = phantom.display_name();
-                let msg = phantom.message.as_deref().unwrap_or("auto-backup");
                 let ttl = phantom.remaining_ttl();
-                let hours = ttl.num_hours();
-                let mins = ttl.num_minutes() % 60;
+                let hours = ttl.num_hours().max(0);
+                let mins = ttl.num_minutes().max(0) % 60;
                 let date = phantom.timestamp.format("%m/%d %H:%M");
+                let label = format!(
+                    "{} ○ {}  {}  ({}h{}m)",
+                    prefix, name, date, hours, mins
+                );
+
                 if is_selected {
-                    (format!(" ▶ {}  {}  {} ({}h{}m)", name, date, msg, hours, mins), Theme::selected())
+                    (label, Theme::selected())
                 } else {
-                    (format!("   {}  {}  {} ({}h{}m)", name, date, msg, hours, mins), Theme::dim())
+                    (label, Theme::dim())
                 }
             }
         };
 
-        ListItem::new(Line::from(
-            Span::styled(label, style.add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }))
-        ))
+        let bold = if is_selected { Modifier::BOLD } else { Modifier::empty() };
+        ListItem::new(Line::from(Span::styled(label, style.add_modifier(bold))))
     }).collect();
-
-    frame.render_widget(block, area);
-
-    if list_items.is_empty() {
-        let empty = Paragraph::new("  No snapshots yet.\n  Run `palin snap`!")
-            .style(Theme::dim())
-            .wrap(Wrap { trim: true });
-        frame.render_widget(empty, inner);
-        return;
-    }
 
     let mut state = ListState::default().with_selected(Some(app.selected_idx));
     let list = List::new(list_items)
@@ -170,45 +202,63 @@ fn render_timeline(app: &App, frame: &mut Frame, area: Rect) {
 
 fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     let items = app.timeline_items();
+
     if items.is_empty() {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Theme::border())
             .title(" Details ")
-            .title_style(Theme::accent());
-        let empty = Paragraph::new("  No data to display.")
-            .style(Theme::dim())
-            .block(block);
-        frame.render_widget(empty, area);
+            .title_style(Theme::accent())
+            .style(Theme::base());
+        frame.render_widget(
+            Paragraph::new("  No data to display.")
+                .style(Theme::dim())
+                .block(block),
+            area,
+        );
         return;
     }
 
     let item = items[app.selected_idx];
 
-    // Build the header block for the detail panel
-    let (title, subtitle, locked_tag) = match item {
+    // Build the detail header
+    let (title, subtitle, badge) = match item {
         TimelineItem::Epoch(epoch) => {
             let name = epoch.display_name();
             let date = epoch.timestamp.format("%Y-%m-%d %H:%M:%S");
             let msg = epoch.message.as_deref().unwrap_or("(no message)");
-            let lock = if epoch.is_locked { " 🔒 LOCKED" } else { "" };
-            (name, format!("{}  —  {}", date, msg), lock.to_string())
+            let badge_text = if epoch.is_locked {
+                " 🔒 LOCKED "
+            } else if epoch.is_origin {
+                " ◆ ORIGIN "
+            } else {
+                ""
+            };
+            (
+                format!(" {} ", name),
+                format!("{}  —  {}", date, msg),
+                badge_text.to_string(),
+            )
         }
         TimelineItem::Phantom(phantom) => {
             let name = phantom.display_name();
             let date = phantom.timestamp.format("%Y-%m-%d %H:%M:%S");
             let ttl = phantom.remaining_ttl();
-            let hours = ttl.num_hours();
-            let mins = ttl.num_minutes() % 60;
+            let hours = ttl.num_hours().max(0);
+            let mins = ttl.num_minutes().max(0) % 60;
             let msg = phantom.message.as_deref().unwrap_or("auto-backup");
-            (name, format!("{}  —  {}  (expires in {}h{}m)", date, msg, hours, mins), String::new())
+            (
+                format!(" {} ", name),
+                format!("{}  —  {}  (expires in {}h{}m)", date, msg, hours, mins),
+                String::new(),
+            )
         }
     };
 
-    let mut title_text = format!("  {}  ", title);
-    if !locked_tag.is_empty() {
-        title_text.push_str(&locked_tag);
+    let mut title_text = title;
+    if !badge.is_empty() {
+        title_text.push_str(&badge);
     }
 
     let header_block = Block::default()
@@ -216,34 +266,34 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
         .border_type(BorderType::Rounded)
         .border_style(Theme::border())
         .title(format!(" {} ", title_text))
-        .title_style(Theme::accent_bold());
+        .title_style(Theme::accent_bold())
+        .style(Theme::base());
 
-    // Split the detail area into info top and file list bottom
     let inner = header_block.inner(area);
     frame.render_widget(header_block, area);
 
+    // Subtitle + file list
     let vchunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),  // Subtitle
-            Constraint::Min(1),     // File list
-        ])
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
         .split(inner);
 
-    // Subtitle line
-    let sub_line = Paragraph::new(Line::from(Span::styled(subtitle, Theme::dim())));
-    frame.render_widget(sub_line, vchunks[0]);
+    // Subtitle
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(subtitle, Theme::dim()))),
+        vchunks[0],
+    );
 
     // File list
     let entries = &app.current_entries;
     if entries.is_empty() {
-        let no_files = Paragraph::new("  (no file changes)")
-            .style(Theme::dim());
-        frame.render_widget(no_files, vchunks[1]);
+        frame.render_widget(
+            Paragraph::new("  (no files in this snapshot)").style(Theme::dim()),
+            vchunks[1],
+        );
         return;
     }
 
-    // Viewport offset — only show files that fit the visible area
     let list_height = vchunks[1].height.saturating_sub(1) as usize;
     let max_visible = list_height.max(1);
     let scroll_offset = if app.selected_file_idx >= max_visible {
@@ -251,30 +301,31 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     } else {
         0
     };
-    let visible_entries = entries
+
+    let visible = entries
         .iter()
         .enumerate()
         .skip(scroll_offset)
         .take(max_visible);
 
-    let file_list_items: Vec<ListItem> = visible_entries.map(|(i, entry)| {
+    let file_items: Vec<ListItem> = visible.map(|(i, entry)| {
         let status_char = app.status_for(entry);
         let status_style = app.status_color(entry);
+
         let size = entry.file_size.unwrap_or(0);
-        let size_str = if size > 1024 * 1024 {
-            format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+        let size_str = if size > 1_048_576 {
+            format!("{:>8.1} MB", size as f64 / 1_048_576.0)
         } else if size > 1024 {
-            format!("{:.1} KB", size as f64 / 1024.0)
+            format!("{:>8.1} KB", size as f64 / 1024.0)
         } else {
-            format!("{} B", size)
+            format!("{:>8} B", size)
         };
 
-        let path_str = &entry.file_path;
-        // Truncate long paths
-        let display_path = if path_str.len() > 50 {
-            format!("...{}", &path_str[path_str.len().saturating_sub(47)..])
+        let path = &entry.file_path;
+        let display_path = if path.len() > 48 {
+            format!("...{}", &path[path.len().saturating_sub(45)..])
         } else {
-            path_str.clone()
+            path.clone()
         };
 
         let is_selected = i == app.selected_file_idx;
@@ -283,15 +334,114 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
         let line = Line::from(vec![
             Span::styled(format!(" {} ", status_char), status_style),
             Span::styled(display_path, base_style),
-            Span::styled(format!("  ({})", size_str), Theme::dim()),
+            Span::styled(format!(" {}", size_str), Theme::dim()),
         ]);
         ListItem::new(line)
     }).collect();
 
-    let adjusted_selected = app.selected_file_idx.saturating_sub(scroll_offset);
-    let mut file_state = ListState::default().with_selected(Some(adjusted_selected));
-    let file_list = List::new(file_list_items)
+    let adj = app.selected_file_idx.saturating_sub(scroll_offset);
+    let mut fs = ListState::default().with_selected(Some(adj));
+    let list = List::new(file_items)
         .highlight_style(Theme::selected())
         .highlight_symbol("");
-    frame.render_stateful_widget(file_list, vchunks[1], &mut file_state);
+    frame.render_stateful_widget(list, vchunks[1], &mut fs);
+}
+
+// ── Command bar ────────────────────────────────────────────────
+
+fn render_command_bar(app: &App, frame: &mut Frame, area: Rect) {
+    let output_count = app.command_output.len().min(5);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(if output_count > 0 {
+            vec![Constraint::Length(output_count as u16), Constraint::Length(2)]
+        } else {
+            vec![Constraint::Min(0), Constraint::Length(2)]
+        })
+        .split(area);
+
+    // Output lines — newest at bottom, scrolling up
+    if output_count > 0 {
+        let lines: Vec<Line> = app.command_output.iter().take(5).rev().map(|line| {
+            let style = if line.starts_with('✖') {
+                Theme::deleted()
+            } else if line.starts_with('✦') || line.starts_with('●') {
+                Theme::accent()
+            } else if line.starts_with('>') {
+                Theme::accent_bold()
+            } else {
+                Theme::dim()
+            };
+            Line::from(Span::styled(format!(" {}", line), style))
+        }).collect();
+
+        frame.render_widget(
+            Paragraph::new(Text::from(lines)).style(Theme::base()),
+            chunks[0],
+        );
+    }
+
+    // Input line — with separator bar
+    let input_area = chunks[chunks.len() - 1];
+
+    // Separator line
+    let sep = Line::from(Span::styled(
+        format!(
+            "{}",
+            "─".repeat(input_area.width.saturating_sub(1) as usize)
+        ),
+        Theme::separator(),
+    ));
+
+    let cursor_visible = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| (d.as_millis() / 500) % 2 == 0)
+        .unwrap_or(true);
+
+    // Build the input line spans
+    let input_spans = if app.command_buffer.is_empty() {
+        let cursor = if cursor_visible { "█" } else { " " };
+        vec![
+            Span::styled(" > ", Theme::prompt()),
+            Span::styled(cursor, Theme::fg()),
+        ]
+    } else {
+        let before = &app.command_buffer[..app.command_cursor.min(app.command_buffer.len())];
+        let after = &app.command_buffer[app.command_cursor.min(app.command_buffer.len())..];
+
+        let mut spans = vec![
+            Span::styled(" > ", Theme::prompt()),
+            Span::styled(before.to_string(), Theme::fg()),
+        ];
+
+        if cursor_visible && after.is_empty() {
+            spans.push(Span::styled(after.to_string(), Theme::fg()));
+            spans.push(Span::styled("█", Theme::fg()));
+        } else if cursor_visible {
+            let ch = &after[..1];
+            let rest = &after[1..];
+            spans.push(Span::styled(format!("█{}", ch), Theme::fg()));
+            spans.push(Span::styled(rest.to_string(), Theme::fg()));
+        } else {
+            spans.push(Span::styled(after.to_string(), Theme::fg()));
+        }
+        spans
+    };
+
+    // Render: separator on top line, input on bottom line
+    let input_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(input_area);
+
+    frame.render_widget(
+        Paragraph::new(sep).style(Theme::base()),
+        input_chunks[0],
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::from(input_spans)).style(Theme::base()),
+        input_chunks[1],
+    );
 }

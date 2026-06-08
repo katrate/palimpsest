@@ -33,6 +33,26 @@ pub struct App {
 
     /// Terminal size cache for layout
     pub term_area: Rect,
+
+    // ── Command mode ──────────────────────────────────────────
+
+    /// Whether the user is typing a command
+    pub command_mode: bool,
+
+    /// The current command buffer text
+    pub command_buffer: String,
+
+    /// Cursor position within the buffer
+    pub command_cursor: usize,
+
+    /// Recent command output lines (newest first)
+    pub command_output: Vec<String>,
+
+    /// Command history (past executed commands)
+    pub command_history: Vec<String>,
+
+    /// Index into command history for navigation (-1 = no history selected)
+    pub history_idx: isize,
 }
 
 impl App {
@@ -52,6 +72,12 @@ impl App {
             show_help: false,
             running: true,
             term_area: Rect::default(),
+            command_mode: false,
+            command_buffer: String::new(),
+            command_cursor: 0,
+            command_output: Vec::new(),
+            command_history: Vec::new(),
+            history_idx: -1,
         };
         app.load_entries()?;
         Ok(app)
@@ -125,6 +151,8 @@ impl App {
 
                 if self.show_help {
                     self.handle_help_input()?;
+                } else if self.command_mode {
+                    self.handle_command_input()?;
                 } else {
                     self.handle_main_input()?;
                 }
@@ -148,6 +176,9 @@ impl App {
                 return Ok(());
             }
             match code {
+                KeyCode::Char(':') => {
+                    self.enter_command_mode();
+                }
                 KeyCode::Char('q') | KeyCode::Esc => {
                     self.running = false;
                 }
@@ -182,7 +213,6 @@ impl App {
                     self.load_entries()?;
                 }
                 KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right => {
-                    // Move focus to file list (or scroll down in file list)
                     if self.current_entries.len() > 1 {
                         self.selected_file_idx = self
                             .selected_file_idx
@@ -191,7 +221,6 @@ impl App {
                     }
                 }
                 KeyCode::BackTab | KeyCode::Char('h') | KeyCode::Left => {
-                    // Move focus back
                     if self.selected_file_idx > 0 {
                         self.selected_file_idx = self.selected_file_idx.saturating_sub(1);
                     }
@@ -203,6 +232,301 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    // ── Command mode input handler ──────────────────────────────
+
+    fn handle_command_input(&mut self) -> Result<()> {
+        if !event::poll(Duration::from_millis(100))? {
+            return Ok(());
+        }
+        let ev = event::read()?;
+        if let Event::Key(KeyEvent { code, kind, .. }) = ev {
+            if kind != KeyEventKind::Press {
+                return Ok(());
+            }
+            match code {
+                KeyCode::Esc => {
+                    self.exit_command_mode();
+                }
+                KeyCode::Enter => {
+                    self.execute_command();
+                }
+                KeyCode::Backspace => {
+                    if self.command_cursor > 0 {
+                        self.command_buffer.remove(self.command_cursor - 1);
+                        self.command_cursor -= 1;
+                    }
+                }
+                KeyCode::Delete => {
+                    if self.command_cursor < self.command_buffer.len() {
+                        self.command_buffer.remove(self.command_cursor);
+                    }
+                }
+                KeyCode::Left => {
+                    self.command_cursor = self.command_cursor.saturating_sub(1);
+                }
+                KeyCode::Right => {
+                    self.command_cursor = self.command_cursor
+                        .min(self.command_buffer.len());
+                }
+                KeyCode::Up => {
+                    self.navigate_history(-1);
+                }
+                KeyCode::Down => {
+                    self.navigate_history(1);
+                }
+                KeyCode::Home => {
+                    self.command_cursor = 0;
+                }
+                KeyCode::End => {
+                    self.command_cursor = self.command_buffer.len();
+                }
+                KeyCode::Tab => {
+                    self.auto_complete();
+                }
+                KeyCode::Char(c) => {
+                    self.command_buffer.insert(self.command_cursor, c);
+                    self.command_cursor += 1;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn enter_command_mode(&mut self) {
+        self.command_mode = true;
+        self.command_buffer.clear();
+        self.command_cursor = 0;
+        self.history_idx = -1;
+    }
+
+    fn exit_command_mode(&mut self) {
+        self.command_mode = false;
+        self.command_buffer.clear();
+        self.command_cursor = 0;
+        self.history_idx = -1;
+    }
+
+    fn navigate_history(&mut self, direction: isize) {
+        if self.command_history.is_empty() {
+            return;
+        }
+        let len = self.command_history.len() as isize;
+        let new_idx = self.history_idx + direction;
+        if new_idx < -1 || new_idx >= len {
+            return;
+        }
+        self.history_idx = new_idx;
+        if new_idx == -1 {
+            self.command_buffer.clear();
+            self.command_cursor = 0;
+        } else {
+            let entry = &self.command_history[new_idx as usize];
+            self.command_buffer = entry.clone();
+            self.command_cursor = entry.len();
+        }
+    }
+
+    fn auto_complete(&mut self) {
+        let known_commands = [
+            "snap", "log", "status", "ls", "info", "reload", "help",
+            "tag", "tags", "lock", "unlock", "phantoms", "note",
+            "restore", "gc", "export", "find", "show", "blame", "grep",
+        ];
+        let buf = self.command_buffer.trim().to_lowercase();
+        if buf.is_empty() {
+            return;
+        }
+        // Simple prefix completion
+        for cmd in &known_commands {
+            if cmd.starts_with(&buf) && cmd != &buf {
+                self.command_buffer = cmd.to_string();
+                self.command_cursor = cmd.len();
+                break;
+            }
+        }
+    }
+
+    // ── Command execution ────────────────────────────────────────
+
+    fn execute_command(&mut self) {
+        let raw = std::mem::take(&mut self.command_buffer);
+        self.command_cursor = 0;
+        let trimmed = raw.trim().to_string();
+        if trimmed.is_empty() {
+            self.command_mode = false;
+            return;
+        }
+
+        // Add to history
+        self.command_history.push(trimmed.clone());
+        if self.command_history.len() > 50 {
+            self.command_history.remove(0);
+        }
+        self.history_idx = -1;
+
+        // Parse: split by spaces, respecting quoted strings
+        let args = parse_args(&trimmed);
+        if args.is_empty() {
+            self.command_mode = false;
+            return;
+        }
+
+        let cmd = args[0].to_lowercase();
+        let rest: Vec<&str> = args[1..].iter().map(|s| s.as_str()).collect();
+
+        match cmd.as_str() {
+            "q" | "quit" | "exit" => {
+                self.command_mode = false;
+                self.running = false;
+                return;
+            }
+            "help" | "?" => {
+                self.command_mode = false;
+                self.show_help = true;
+                return;
+            }
+            "reload" => {
+                self.command_mode = false;
+                let _ = self.reload();
+                self.add_output("✦ Reloaded timeline");
+                return;
+            }
+            "clear" | "cls" => {
+                self.command_output.clear();
+                self.command_mode = false;
+                return;
+            }
+            _ => {}
+        }
+
+        // Internal commands that don't need subprocess spawning
+        if cmd == "ls" {
+            self.run_internal("ls", &[]);
+            return;
+        }
+
+        // Build subprocess args for the palin binary
+        let exe_path = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(e) => {
+                self.add_output(&format!("✖ Error: {}", e));
+                return;
+            }
+        };
+
+        let mut proc_args: Vec<String> = vec![cmd.clone()];
+
+        // Inject palin name for commands that need it
+        let needs_name: bool = matches!(
+            cmd.as_str(),
+            "snap" | "log" | "status" | "info" | "phantoms"
+                | "lock" | "unlock" | "tags" | "ignore" | "gc"
+                | "note" | "export"
+        );
+
+        if needs_name {
+            proc_args.push(self.palin.name.clone());
+            proc_args.extend(rest.iter().map(|s| s.to_string()));
+        } else if cmd == "tag" || cmd == "tag-del" {
+            proc_args.push(self.palin.name.clone());
+            proc_args.extend(rest.iter().map(|s| s.to_string()));
+        } else if cmd == "restore" {
+            // restore <epoch> [name] [-y] [--dry-run]
+            // Insert the palin name after the epoch argument
+            if !rest.is_empty() {
+                proc_args.push(rest[0].to_string()); // epoch
+                proc_args.push(self.palin.name.clone());
+                for a in &rest[1..] {
+                    proc_args.push(a.to_string());
+                }
+            }
+        } else if matches!(cmd.as_str(), "diff" | "show" | "blame") {
+            // These use -n for name
+            proc_args.push("-n".to_string());
+            proc_args.push(self.palin.name.clone());
+            proc_args.extend(rest.iter().map(|s| s.to_string()));
+        } else if cmd == "find" || cmd == "grep" {
+            // find <filename> [name], grep <pattern> [name]
+            // Name comes last
+            proc_args.extend(rest.iter().map(|s| s.to_string()));
+            proc_args.push(self.palin.name.clone());
+        } else {
+            // Everything else: just append rest as-is
+            // (e.g. init, rm-palin, rename — these have required name args)
+            proc_args.extend(rest.iter().map(|s| s.to_string()));
+        }
+
+        // Run the subprocess
+        let result = std::process::Command::new(&exe_path)
+            .args(&proc_args)
+            .output();
+
+        match result {
+            Ok(output) => {
+                if !output.stdout.is_empty() {
+                    let text = String::from_utf8_lossy(&output.stdout);
+                    for line in text.lines() {
+                        self.add_output(line);
+                    }
+                }
+                if !output.stderr.is_empty() {
+                    let text = String::from_utf8_lossy(&output.stderr);
+                    for line in text.lines() {
+                        self.add_output(&format!("✖ {}", line));
+                    }
+                }
+                if !output.status.success() {
+                    self.add_output(&format!(
+                        "✖ Command exited with code {:?}",
+                        output.status.code()
+                    ));
+                }
+            }
+            Err(e) => {
+                self.add_output(&format!("✖ Failed to execute: {}", e));
+            }
+        }
+
+        // Exit command mode and reload timeline state
+        self.command_mode = false;
+        let _ = self.reload();
+    }
+
+    fn run_internal(&mut self, _cmd: &str, _args: &[&str]) {
+        let registry = match storage::read_registry() {
+            Ok(r) => r,
+            Err(e) => {
+                self.add_output(&format!("✖ {}", e));
+                return;
+            }
+        };
+
+        if registry.palins.is_empty() {
+            self.add_output("No palins found. Use `palin init <name>` to create one.");
+            return;
+        }
+
+        self.add_output("✦ Registered palins:");
+        let mut palins: Vec<_> = registry.palins.iter().collect();
+        palins.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, entry) in &palins {
+            let p = std::path::Path::new(&entry.path);
+            let status = if p.exists() { "" } else { "  ⚠ missing" };
+            self.add_output(&format!("  {:<20}  {}{}", name, entry.path, status));
+        }
+        self.command_mode = false;
+    }
+
+    // ── Output helpers ───────────────────────────────────────────
+
+    pub fn add_output(&mut self, line: &str) {
+        self.command_output.insert(0, line.to_string());
+        if self.command_output.len() > 100 {
+            self.command_output.pop();
+        }
     }
 
     // ── Help overlay input ────────────────────────────────────────
@@ -266,6 +590,36 @@ impl App {
 pub enum TimelineItem<'a> {
     Epoch(&'a Epoch),
     Phantom(&'a Phantom),
+}
+
+// ── Argument parsing ───────────────────────────────────────────
+
+/// Split a command string into arguments, respecting double-quoted strings.
+fn parse_args(input: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                in_quotes = !in_quotes;
+            }
+            ' ' if !in_quotes => {
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            _ => {
+                current.push(ch);
+            }
+        }
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    args
 }
 
 // ─── Terminal initialisation / shutdown ─────────────────────────

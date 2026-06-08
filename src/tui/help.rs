@@ -25,11 +25,11 @@ pub fn render_help(frame: &mut Frame, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Thick)
-        .border_style(Theme::accent())
+        .border_style(Theme::border_active())
         .title(" ◆ Help ")
         .title_style(Theme::accent_bold())
         .title_alignment(Alignment::Center)
-        .style(Theme::base());
+        .style(Style::new().bg(Theme::BG).fg(Theme::FG));
 
     let lines = vec![
         Line::from(Span::styled(" Keyboard Shortcuts", Theme::accent_bold())),
