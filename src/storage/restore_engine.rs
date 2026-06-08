@@ -107,8 +107,9 @@ fn delete_untracked_files(
 pub fn preview_restore(
     target_dir: &Path,
     entries: &[FileEntry],
+    palin_name: &str,
 ) -> anyhow::Result<Vec<String>> {
-    restore_to_snapshot(target_dir, entries, "", true)
+    restore_to_snapshot(target_dir, entries, palin_name, true)
 }
 
 /// Count how many files would be affected by a restore

@@ -97,7 +97,7 @@ pub fn execute(
 
     // Perform the restore
     if dry_run {
-        let actions = storage::restore_engine::preview_restore(&target_dir, &entries)?;
+        let actions = storage::restore_engine::preview_restore(&target_dir, &entries, &resolved.name)?;
         println!("✦ Dry run — restore to {} ({})", display_name, target_dir.display());
         if actions.is_empty() {
             println!("  No changes needed.");
