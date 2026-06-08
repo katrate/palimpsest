@@ -8,6 +8,9 @@ use ratatui::{
     Frame,
 };
 
+use chrono::Local;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
 use super::app::{App, TimelineItem};
 use super::theme::Theme;
 
@@ -15,18 +18,23 @@ use super::theme::Theme;
 pub fn render(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
 
-    // Output bar at bottom — always visible, dynamic height
+    // When picker is open, render nothing except the picker itself
+    if app.show_picker {
+        render_picker(app, frame, area);
+        return;
+    }
+
     let output_lines = app.command_output.len().min(5) as u16;
-    let out_height = output_lines.max(1); // at least 1 line so it's always visible
+    let out_height = output_lines.max(1);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),             // Header bar (with Snap button)
-            Constraint::Length(1),             // Search bar
-            Constraint::Min(1),                // Body
-            Constraint::Length(1),             // Status bar
-            Constraint::Length(out_height),    // Output bar (always visible)
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(out_height),
         ])
         .split(area);
 
@@ -44,16 +52,82 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 // ── Header bar ─────────────────────────────────────────────────
 
 fn render_header(frame: &mut Frame, area: Rect, app: &mut App) {
-    let title = format!(" ◆ Palimpsest — {} ", app.palin.name);
+    let gc_style = Style::new()
+        .bg(Theme::SURFACE)
+        .fg(ratatui::style::Color::Rgb(255, 120, 70))
+        .add_modifier(Modifier::BOLD);
+
+    if app.rename_mode {
+        // Show rename input in the header
+        let prompt_text = format!(" Rename: {}_", app.rename_input);
+        let gc_text = " [GC] ";
+        let info_text = " [Info] ";
+        let snap_text = " [ ◆ Snap ] ";
+        let total_other = gc_text.len() as u16 + info_text.len() as u16 + snap_text.len() as u16;
+        let gc_x = (area.width as usize).saturating_sub(total_other as usize) as u16;
+        let info_x = gc_x + gc_text.len() as u16;
+        let snap_x = info_x + info_text.len() as u16;
+        let gc_area = Rect::new(gc_x, area.y, gc_text.len() as u16, 1);
+        let info_area = Rect::new(info_x, area.y, info_text.len() as u16, 1);
+        let snap_area = Rect::new(snap_x, area.y, snap_text.len() as u16, 1);
+        app.gc_button_area = gc_area;
+        app.snap_button_area = snap_area;
+        app.info_button_area = info_area;
+        app.rename_button_area = Rect::default();
+
+        let spans = vec![
+            Span::styled(prompt_text, Theme::fg().add_modifier(Modifier::BOLD)),
+        ];
+        frame.render_widget(Paragraph::new(Line::from(spans)).left_aligned(), area);
+
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(gc_text, gc_style))),
+            gc_area,
+        );
+
+        let info_style = Style::new()
+            .bg(Theme::SURFACE)
+            .fg(Theme::CYAN)
+            .add_modifier(Modifier::BOLD);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(info_text, info_style))),
+            info_area,
+        );
+
+        let snap_style = Style::new()
+            .bg(Theme::SURFACE)
+            .fg(Theme::GREEN)
+            .add_modifier(Modifier::BOLD);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(snap_text, snap_style))),
+            snap_area,
+        );
+        return;
+    }
+
+    let title = format!(" ◆ {}", app.palin.name);
     let path = format!(" {}", app.palin.path.display());
 
-    // Snap button — right-aligned
-    let btn_text = " [ ◆ Snap ] ";
-    let btn_x = (area.width as usize).saturating_sub(btn_text.len()) as u16;
-    let btn_area = Rect::new(btn_x, area.y, btn_text.len() as u16, 1);
+    // Buttons: GC | Info | Rename | Snap — right-aligned
+    let gc_text = " [GC] ";
+    let info_text = " [Info] ";
+    let rename_text = " [Rename] ";
+    let snap_text = " [ ◆ Snap ] ";
+    let total_btn_w = gc_text.len() as u16 + info_text.len() as u16 + rename_text.len() as u16 + snap_text.len() as u16;
+    let gc_x = (area.width as usize).saturating_sub(total_btn_w as usize) as u16;
+    let info_x = gc_x + gc_text.len() as u16;
+    let rename_x = info_x + info_text.len() as u16;
+    let snap_x = rename_x + rename_text.len() as u16;
 
-    // Store for mouse-click detection
-    app.snap_button_area = btn_area;
+    let gc_area = Rect::new(gc_x, area.y, gc_text.len() as u16, 1);
+    let info_area = Rect::new(info_x, area.y, info_text.len() as u16, 1);
+    let rename_area = Rect::new(rename_x, area.y, rename_text.len() as u16, 1);
+    let snap_area = Rect::new(snap_x, area.y, snap_text.len() as u16, 1);
+
+    app.gc_button_area = gc_area;
+    app.snap_button_area = snap_area;
+    app.rename_button_area = rename_area;
+    app.info_button_area = info_area;
 
     let text = Line::from(vec![
         Span::styled(title, Theme::header()),
@@ -61,14 +135,36 @@ fn render_header(frame: &mut Frame, area: Rect, app: &mut App) {
     ]);
     frame.render_widget(Paragraph::new(text).left_aligned(), area);
 
-    // Render the Snap button on top
-    let btn_style = Style::new()
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(gc_text, gc_style))),
+        gc_area,
+    );
+
+    let info_style = Style::new()
+        .bg(Theme::SURFACE)
+        .fg(Theme::CYAN)
+        .add_modifier(Modifier::BOLD);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(info_text, info_style))),
+        info_area,
+    );
+
+    let rename_style = Style::new()
+        .bg(Theme::SURFACE)
+        .fg(Theme::YELLOW)
+        .add_modifier(Modifier::BOLD);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(rename_text, rename_style))),
+        rename_area,
+    );
+
+    let snap_style = Style::new()
         .bg(Theme::SURFACE)
         .fg(Theme::GREEN)
         .add_modifier(Modifier::BOLD);
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(btn_text, btn_style))),
-        btn_area,
+        Paragraph::new(Line::from(Span::styled(snap_text, snap_style))),
+        snap_area,
     );
 }
 
@@ -135,8 +231,9 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     let hints = [
         (" q ", "Quit"),
         (" ? ", "Help"),
-        ("↑↓", "Nav"),
-        ("←→", "Focus"),
+        (" p ", "Pick"),
+        (" i ", "Info"),
+        (" d ", "Diff"),
         (" r ", "Reload"),
         (" s ", "Snap"),
     ];
@@ -216,13 +313,12 @@ fn render_timeline(app: &mut App, frame: &mut Frame, area: Rect) {
     } else {
         app.selected_idx.saturating_sub(item_visible / 2)
     };
-    let end = (scroll + item_visible).min(item_count);
-
-    // Store for mouse-click detection
+    let end = (scroll + item_visible).min(item_count);        // Store for mouse-click detection
     app.timeline_list_area = inner;
     app.timeline_scroll = scroll;
 
     let items = app.timeline_items();
+    let mut selected_btn_start_x = 0u16;
     if items.is_empty() {
         frame.render_widget(
             Paragraph::new("  No snapshots yet.\n  Click [ ◆ Snap ] or press 's'!")
@@ -232,8 +328,6 @@ fn render_timeline(app: &mut App, frame: &mut Frame, area: Rect) {
         );
         return;
     }
-
-    const BTN_W: u16 = 9; // " [↩] [✕]"
 
     // Helper to render a centered section header
     let render_header = |frame: &mut Frame, inner: Rect, vis_row: u16, text: &str| {
@@ -284,7 +378,7 @@ fn render_timeline(app: &mut App, frame: &mut Frame, area: Rect) {
                 let name = epoch.display_name();
                 let msg = epoch.message.as_deref().unwrap_or("");
                 let locked = if epoch.is_locked { " 🔒" } else { "" };
-                let date = epoch.timestamp.format("%m/%d %H:%M");
+                let date = epoch.timestamp.with_timezone(&Local).format("%m/%d %H:%M");
                 let text = format!("{} {}  {}  {}{}", prefix, name, date, msg, locked);
                 let st = if is_selected {
                     Theme::selected()
@@ -302,7 +396,7 @@ fn render_timeline(app: &mut App, frame: &mut Frame, area: Rect) {
                 let ttl = phantom.remaining_ttl();
                 let hours = ttl.num_hours().max(0);
                 let mins = ttl.num_minutes().max(0) % 60;
-                let date = phantom.timestamp.format("%m/%d %H:%M");
+                let date = phantom.timestamp.with_timezone(&Local).format("%m/%d %H:%M");
                 let text = format!("{} ○ {}  {}  ({}h{}m)", prefix, name, date, hours, mins);
                 let st = if is_selected { Theme::selected() } else { Theme::dim() };
                 (text, st)
@@ -314,18 +408,44 @@ fn render_timeline(app: &mut App, frame: &mut Frame, area: Rect) {
             text_style = text_style.add_modifier(Modifier::BOLD);
         }
 
-        // Build the row string with action buttons
-        let row_text = {
-            let max_label = (inner.width.saturating_sub(BTN_W).saturating_sub(1)) as usize;
-            let label = if display_text.len() > max_label {
-                format!("{}…", &display_text[..max_label.saturating_sub(1)])
-            } else {
-                display_text
-            };
-            // Pad to fill remaining space before buttons
-            let pad = inner.width.saturating_sub(label.len() as u16 + BTN_W);
-            format!("{}  {}  [↩] [✕]", label, " ".repeat(pad.saturating_sub(4) as usize))
+        // Build the row string with action buttons (lock + restore + delete)
+        let is_epoch = i < epoch_count;
+        let lock_indicator = if is_epoch {
+            match item {
+                TimelineItem::Epoch(e) => {
+                    if e.is_locked { " [L]" } else { " [ ]" }
+                }
+                _ => "    "
+            }
+        } else {
+            "    "
         };
+        let buttons = format!("{}{}", lock_indicator, " [↩] [✕]");
+        let buttons_len = buttons.chars().count() as u16;
+        let max_label = (inner.width.saturating_sub(buttons_len).saturating_sub(1)) as usize;
+        let label = if display_text.width() > max_label {
+            // Truncate at display width boundary — walk char by char
+            let mut w = 0usize;
+            let mut char_end = 0usize;
+            for (ci, c) in display_text.char_indices() {
+                let c_w = c.width().unwrap_or(0);
+                if w + c_w > max_label {
+                    break;
+                }
+                w += c_w;
+                char_end = ci + c.len_utf8();
+            }
+            format!("{}…", &display_text[..char_end])
+        } else {
+            display_text
+        };
+        let label_width = label.width() as u16;
+        let pad = inner.width.saturating_sub(label_width + buttons_len);
+        let btn_x = inner.x + label_width + pad;
+        if i == app.selected_idx {
+            selected_btn_start_x = btn_x;
+        }
+        let row_text = format!("{}{}{}", label, " ".repeat(pad as usize), buttons);
 
         let row_y = inner.y + vis_row;
         let row_rect = Rect::new(inner.x, row_y, inner.width, 1);
@@ -342,6 +462,8 @@ fn render_timeline(app: &mut App, frame: &mut Frame, area: Rect) {
 
         vis_row += 1;
     }
+
+    app.timeline_btn_start_x = selected_btn_start_x;
 }
 
 // ── Detail panel (right) ───────────────────────────────────────
@@ -366,6 +488,12 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
         return;
     }
 
+    // ── File preview view (when Enter pressed on a file) ───
+    if app.show_preview {
+        render_preview(app, frame, area);
+        return;
+    }
+
     // ── Diff / Compare view ──────────────────────────────
     if !app.compare_result_lines.is_empty() || app.compare_error.is_some() {
         render_diff_view(app, frame, area);
@@ -378,7 +506,7 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
     let (title, subtitle, badge) = match item {
         TimelineItem::Epoch(epoch) => {
             let name = epoch.display_name();
-            let date = epoch.timestamp.format("%Y-%m-%d %H:%M:%S");
+            let date = epoch.timestamp.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S");
             let msg = epoch.message.as_deref().unwrap_or("(no message)");
             let badge_text = if epoch.is_locked {
                 " 🔒 LOCKED "
@@ -395,7 +523,7 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
         }
         TimelineItem::Phantom(phantom) => {
             let name = phantom.display_name();
-            let date = phantom.timestamp.format("%Y-%m-%d %H:%M:%S");
+            let date = phantom.timestamp.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S");
             let ttl = phantom.remaining_ttl();
             let hours = ttl.num_hours().max(0);
             let mins = ttl.num_minutes().max(0) % 60;
@@ -497,22 +625,33 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
 
         let status_char = app.status_for_entry(row);
         let status_style = app.status_color_for(row);
-        ListItem::new(Line::from(vec![
+        let name_style = if is_selected { Theme::selected() } else { status_style };
+
+        let name_max = (vchunks[1].width as usize).saturating_sub(18); // 4=indent+status, 14=size
+        let display_name = if row.name.len() > name_max {
+            format!("{}…", &row.name[..name_max.saturating_sub(1)])
+        } else {
+            row.name.clone()
+        };
+
+        let mut spans = vec![
             Span::styled(format!("{}  {} ", indent, status_char), status_style),
-            Span::styled(&row.name, if is_selected { Theme::selected() } else { status_style }),
-            Span::styled(
-                row.file_size.map_or(String::new(), |s| {
-                    if s > 1_048_576 {
-                        format!(" {:>7.1} MB", s as f64 / 1_048_576.0)
-                    } else if s > 1024 {
-                        format!(" {:>7.1} KB", s as f64 / 1024.0)
-                    } else {
-                        format!(" {:>7} B", s)
-                    }
-                }),
-                Theme::dim(),
-            ),
-        ]))
+            Span::styled(display_name, name_style),
+        ];
+
+        // File size
+        if let Some(s) = row.file_size {
+            let size_str = if s > 1_048_576 {
+                format!(" {:>7.1} MB", s as f64 / 1_048_576.0)
+            } else if s > 1024 {
+                format!(" {:>7.1} KB", s as f64 / 1024.0)
+            } else {
+                format!(" {:>7} B", s)
+            };
+            spans.push(Span::styled(size_str, Theme::dim()));
+        }
+
+        ListItem::new(Line::from(spans))
     }).collect();
 
     let adj = adj_sel.saturating_sub(scroll_offset);
@@ -521,6 +660,65 @@ fn render_detail(app: &mut App, frame: &mut Frame, area: Rect) {
         .highlight_style(Theme::selected())
         .highlight_symbol("");
     frame.render_stateful_widget(list, vchunks[1], &mut fs);
+}
+
+// ── File preview (content shown inline when pressing Enter) ──
+
+fn render_preview(app: &mut App, frame: &mut Frame, area: Rect) {
+    let file_path = if let Some(row) = app.visible_rows.get(app.selected_file_idx) {
+        row.full_path.clone()
+    } else {
+        String::new()
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Theme::border())
+        .title(format!(" Preview — {} ", file_path))
+        .title_style(Theme::accent_bold())
+        .style(Theme::base());
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Scrolling for long files
+    let max_lines = inner.height.saturating_sub(1) as usize;
+    let total = app.preview_content.len();
+    let scroll = app.preview_scroll.min(total.saturating_sub(max_lines).max(0));
+
+    // Scroll hint
+    let scroll_hint = if total > max_lines {
+        let pct = if total > 0 { (scroll * 100) / total } else { 0 };
+        format!("  [{}% scrolled — ↑/↓]", pct)
+    } else {
+        String::new()
+    };
+
+    if !scroll_hint.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(&scroll_hint, Theme::dim()))),
+            Rect::new(inner.x, inner.y, inner.width, 1),
+        );
+        let content_area = Rect::new(inner.x, inner.y + 1, inner.width, inner.height.saturating_sub(1));
+        let lines: Vec<Line> = app.preview_content.iter()
+            .skip(scroll)
+            .take(content_area.height as usize)
+            .map(|l| {
+                Line::from(Span::styled(l, Theme::fg()))
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(Text::from(lines)), content_area);
+    } else {
+        let lines: Vec<Line> = app.preview_content.iter()
+            .skip(scroll)
+            .take(max_lines)
+            .map(|l| {
+                Line::from(Span::styled(l, Theme::fg()))
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(Text::from(lines)), inner);
+    }
 }
 
 // ── Diff view (shown when comparing file between epochs) ───────
@@ -658,6 +856,149 @@ fn render_diff_view(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 // ── Output bar (with optional confirmation prompt) ───────────
+
+// ── Palin picker overlay ──────────────────────────────────
+
+fn render_picker(app: &mut App, frame: &mut Frame, area: Rect) {
+    // Dimmed background
+    frame.render_widget(
+        Block::default().style(Style::new().bg(ratatui::style::Color::Rgb(0, 0, 0)).fg(Theme::FG)),
+        area,
+    );
+
+    // Centered popup
+    let popup_w = 60u16.min(area.width.saturating_sub(4));
+    let popup_h = (app.all_palins.len() as u16 + 5).min(area.height.saturating_sub(4));
+    let popup_x = area.x + (area.width - popup_w) / 2;
+    let popup_y = area.y + (area.height - popup_h) / 2;
+    let popup = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(Theme::YELLOW))
+        .title(" Palins ")
+        .title_style(Theme::accent_bold())
+        .style(Style::new().bg(Theme::BG));
+
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    // Instructions
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            " Click to switch · [d] to delete · [Esc] to close",
+            Theme::dim(),
+        ))),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+
+    // List of palins
+    let list_start_y = inner.y + 1;
+    let max_visible = inner.height.saturating_sub(1) as usize;
+    let scroll = if app.picker_selected >= max_visible {
+        app.picker_selected.saturating_sub(max_visible).saturating_add(1)
+    } else {
+        0
+    };
+
+    let visible_palins = app.all_palins.iter()
+        .enumerate()
+        .skip(scroll)
+        .take(max_visible);
+
+    for (i, (name, path_str)) in visible_palins {
+        let is_current = name == &app.palin.name;
+        let is_selected = i == app.picker_selected;
+        let row_y = list_start_y + (i - scroll) as u16;
+        let row_rect = Rect::new(inner.x, row_y, inner.width, 1);
+
+        let bg_color = if is_selected { Theme::SURFACE } else { Theme::BG };
+        let name_style = if is_current {
+            Style::new().fg(Theme::GREEN).add_modifier(Modifier::BOLD)
+        } else if is_selected {
+            Style::new().fg(Theme::YELLOW).add_modifier(Modifier::BOLD)
+        } else {
+            Theme::fg()
+        };
+
+        // Truncate path
+        let max_path_w = (inner.width as usize).saturating_sub(name.len() + 20);
+        let path_display = if path_str.len() > max_path_w {
+            format!("…{}", &path_str[path_str.len().saturating_sub(max_path_w.saturating_sub(1))..])
+        } else {
+            path_str.clone()
+        };
+
+        // Delete button (only for non-current)
+        let delete_btn = if is_current { "" } else { " [✕]" };
+        let current_tag = if is_current { " ◆" } else { "  " };
+
+        let mut row_text = format!("{}{} {}  {}{}",
+            if is_selected { ">" } else { " " },
+            current_tag,
+            name,
+            path_display,
+            delete_btn
+        );
+
+        // Truncate to fit
+        if row_text.len() > inner.width as usize {
+            row_text = format!("{}…", &row_text[..inner.width.saturating_sub(2) as usize]);
+        }
+
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(&row_text, name_style.bg(bg_color)))),
+            row_rect,
+        );
+    }
+
+    // Delete confirmation overlay
+    if let Some(ref name) = app.picker_confirm_delete {
+        let confirm_w = 40u16;
+        let confirm_h = 3u16;
+        let confirm_x = area.x + (area.width - confirm_w) / 2;
+        let confirm_y = area.y + area.height / 2;
+        let confirm_area = Rect::new(confirm_x, confirm_y, confirm_w, confirm_h);
+
+        let confirm_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(Theme::RED))
+            .title(" Delete Palin? ")
+            .title_style(Style::new().fg(Theme::RED).add_modifier(Modifier::BOLD))
+            .style(Style::new().bg(Theme::SURFACE));
+
+        let confirm_inner = confirm_block.inner(confirm_area);
+        frame.render_widget(confirm_block, confirm_area);
+
+        let confirm_line = format!("    Delete '{}'?    ", name);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                &confirm_line,
+                Theme::fg().bg(Theme::SURFACE),
+            ))),
+            Rect::new(confirm_inner.x, confirm_inner.y, confirm_inner.width, 1),
+        );
+
+        let yes_style = Style::new().bg(Theme::RED).fg(Theme::BG).add_modifier(Modifier::BOLD);
+        let no_style = Style::new().bg(Theme::GREEN).fg(Theme::BG).add_modifier(Modifier::BOLD);
+        let btn_y = confirm_inner.y + 1;
+        let mid_x = confirm_inner.x + confirm_inner.width / 2;
+        let yes_area = Rect::new(mid_x - 8, btn_y, 6, 1);
+        let no_area = Rect::new(mid_x + 2, btn_y, 6, 1);
+        app.picker_confirm_yes_area = yes_area;
+        app.picker_confirm_no_area = no_area;
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(" [Yes] ", yes_style))),
+            yes_area,
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(" [No] ", no_style))),
+            no_area,
+        );
+    }
+}
 
 fn render_output_bar(app: &mut App, frame: &mut Frame, area: Rect) {
     // Fill the entire area with slate background

@@ -16,3 +16,4 @@ pub mod lock;
 pub mod note;
 pub mod find;
 pub mod export;
+pub mod update;

@@ -9,7 +9,6 @@ use ratatui::layout::Rect;
 use std::collections::HashSet;
 use std::time::Duration;
 
-/// Which panel is currently focused for keyboard navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Timeline,
@@ -17,7 +16,6 @@ pub enum Focus {
     Search,
 }
 
-/// A line in a diff view
 #[derive(Debug, Clone)]
 pub struct DiffLine {
     pub line_type: DiffLineType,
@@ -32,24 +30,19 @@ pub enum DiffLineType {
     Replaced,
 }
 
-/// Kind of action triggered by a timeline button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionKind {
     Restore,
     Delete,
 }
 
-/// A confirmed action waiting to be executed.
 #[derive(Debug, Clone)]
 pub struct PendingAction {
     pub kind: ActionKind,
-    /// Display name e.g. "origin", "epoch-3", "phantom-1"
     pub item_name: String,
-    /// Index into the timeline items
     pub item_idx: usize,
 }
 
-/// Main application state for the TUI.
 pub struct App {
     pub palin: ResolvedPalin,
     pub epochs: Vec<Epoch>,
@@ -64,29 +57,22 @@ pub struct App {
     pub running: bool,
     pub term_area: Rect,
     pub snap_button_area: Rect,
+    pub rename_button_area: Rect,
+    pub info_button_area: Rect,
+    pub gc_button_area: Rect,
+    pub pending_gc: bool,
     pub focus: Focus,
-
-    /// Tracking area for the timeline list (for mouse click detection)
     pub timeline_list_area: Rect,
-    /// Scroll offset of the timeline (items before this are scrolled up)
     pub timeline_scroll: usize,
-    /// Confirmation yes/no button areas in the output bar
     pub confirm_yes_area: Rect,
     pub confirm_no_area: Rect,
-    /// A pending action waiting for user confirmation
     pub pending_action: Option<PendingAction>,
-    /// A confirmed action waiting to be executed after the next frame draw
     pub pending_execute_action: Option<PendingAction>,
-
     pub pending_snap: bool,
     pub command_output: Vec<String>,
-
-    // ── Search bar ──
     pub search_query: String,
     pub search_cursor: usize,
     pub search_bar_area: Rect,
-
-    // ── File compare / diff ──
     pub compare_mode: bool,
     pub compare_file_path: String,
     pub compare_source_idx: usize,
@@ -94,9 +80,20 @@ pub struct App {
     pub compare_error: Option<String>,
     pub compare_pending_epoch: bool,
     pub diff_scroll: usize,
-
-    // ── Detail panel area for click detection ──
     pub detail_list_area: Rect,
+    pub timeline_btn_start_x: u16,
+    pub show_picker: bool,
+    pub all_palins: Vec<(String, String)>,
+    pub picker_selected: usize,
+    pub picker_confirm_delete: Option<String>,
+    pub picker_confirm_yes_area: Rect,
+    pub picker_confirm_no_area: Rect,
+    pub preview_content: Vec<String>,
+    pub preview_scroll: usize,
+    pub show_preview: bool,
+    pub rename_mode: bool,
+    pub rename_input: String,
+    pub rename_cursor: usize,
 }
 
 impl App {
@@ -119,6 +116,10 @@ impl App {
             running: true,
             term_area: Rect::default(),
             snap_button_area: Rect::default(),
+            rename_button_area: Rect::default(),
+            info_button_area: Rect::default(),
+            gc_button_area: Rect::default(),
+            pending_gc: false,
             focus: Focus::Timeline,
             timeline_list_area: Rect::default(),
             timeline_scroll: 0,
@@ -140,8 +141,22 @@ impl App {
             compare_pending_epoch: false,
             diff_scroll: 0,
             detail_list_area: Rect::default(),
+            timeline_btn_start_x: 0,
+            show_picker: false,
+            all_palins: Vec::new(),
+            picker_selected: 0,
+            picker_confirm_delete: None,
+            picker_confirm_yes_area: Rect::default(),
+            picker_confirm_no_area: Rect::default(),
+            preview_content: Vec::new(),
+            preview_scroll: 0,
+            show_preview: false,
+            rename_mode: false,
+            rename_input: String::new(),
+            rename_cursor: 0,
         };
         app.load_entries()?;
+        app.load_palins();
         Ok(app)
     }
 
@@ -261,6 +276,21 @@ impl App {
                     return self.handle_search_input(code);
                 }
 
+                // If there's a pending GC confirmation, handle y/n
+                if self.pending_gc {
+                    match code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                            self.execute_gc();
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            self.pending_gc = false;
+                            self.add_output("✖ GC cancelled.");
+                        }
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+
                 // If there's a pending confirmation, handle y/n
                 if self.pending_action.is_some() {
                     match code {
@@ -269,6 +299,93 @@ impl App {
                         }
                         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                             self.cancel_pending_action();
+                        }
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+
+                // If picker is open, handle picker keys
+                if self.show_picker {
+                    match code {
+                    KeyCode::Down => {
+                        if self.picker_selected + 1 < self.all_palins.len() {
+                            self.picker_selected += 1;
+                        }
+                    }
+                    KeyCode::Up => {
+                        if self.picker_selected > 0 {
+                            self.picker_selected -= 1;
+                        }
+                    }
+                        KeyCode::Enter => {
+                            let name = self.all_palins.get(self.picker_selected).map(|(n, _)| n.clone());
+                            if let Some(ref n) = name {
+                                let _ = self.switch_to_palin(n);
+                            }
+                        }
+                        KeyCode::Char('d') | KeyCode::Delete => {
+                            if let Some((name, _)) = self.all_palins.get(self.picker_selected) {
+                                if name != &self.palin.name {
+                                    self.picker_confirm_delete = Some(name.clone());
+                                }
+                            }
+                        }
+                        KeyCode::Esc => {
+                            self.show_picker = false;
+                            self.picker_confirm_delete = None;
+                        }
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+
+                // If preview is shown, handle preview keys
+                if self.show_preview && !self.preview_content.is_empty() {
+                    match code {
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        if self.preview_scroll + 1 < self.preview_content.len() {
+                            self.preview_scroll += 1;
+                        }
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        if self.preview_scroll > 0 {
+                            self.preview_scroll -= 1;
+                        }
+                    }
+                        KeyCode::Esc => {
+                            self.show_preview = false;
+                            self.preview_content.clear();
+                            self.preview_scroll = 0;
+                        }
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+
+                // If rename mode is active, handle text input
+                if self.rename_mode {
+                    match code {
+                        KeyCode::Char(c) => {
+                            self.rename_input.insert(self.rename_cursor, c);
+                            self.rename_cursor += 1;
+                        }
+                        KeyCode::Backspace => {
+                            if self.rename_cursor > 0 {
+                                self.rename_cursor -= 1;
+                                self.rename_input.remove(self.rename_cursor);
+                            }
+                        }
+                        KeyCode::Delete => {
+                            if self.rename_cursor < self.rename_input.len() {
+                                self.rename_input.remove(self.rename_cursor);
+                            }
+                        }
+                        KeyCode::Enter => {
+                            let _ = self.commit_rename();
+                        }
+                        KeyCode::Esc => {
+                            self.rename_mode = false;
                         }
                         _ => {}
                     }
@@ -293,7 +410,17 @@ impl App {
                     KeyCode::Char('?') => {
                         self.show_help = true;
                     }
-                    KeyCode::Char('j') | KeyCode::Down => {
+                    KeyCode::Char('j') | KeyCode::Char('k') => {
+                        // j/k only scroll diff results (not navigation — use arrows for that)
+                        if !self.compare_result_lines.is_empty() {
+                            if code == KeyCode::Char('j') && self.diff_scroll < self.compare_result_lines.len().saturating_sub(1) {
+                                self.diff_scroll += 1;
+                            } else if code == KeyCode::Char('k') && self.diff_scroll > 0 {
+                                self.diff_scroll -= 1;
+                            }
+                        }
+                    }
+                    KeyCode::Down => {
                         // If viewing a diff result, scroll through it
                         if !self.compare_result_lines.is_empty() {
                             let max = self.compare_result_lines.len().saturating_sub(1);
@@ -312,7 +439,7 @@ impl App {
                             }
                         }
                     }
-                    KeyCode::Char('k') | KeyCode::Up => {
+                    KeyCode::Up => {
                         // If viewing a diff result, scroll through it
                         if !self.compare_result_lines.is_empty() {
                             if self.diff_scroll > 0 {
@@ -336,7 +463,9 @@ impl App {
                             .min(self.timeline_len().saturating_sub(1));
                         if new_idx != self.selected_idx {
                             self.selected_idx = new_idx;
+                            let was_comp = self.compare_mode;
                             self.load_entries()?;
+                            self.compare_mode = was_comp;
                         }
                     }
                     KeyCode::Char('K') | KeyCode::PageUp => {
@@ -344,20 +473,29 @@ impl App {
                         let new_idx = self.selected_idx.saturating_sub(step);
                         if new_idx != self.selected_idx {
                             self.selected_idx = new_idx;
+                            let was_comp = self.compare_mode;
                             self.load_entries()?;
+                            self.compare_mode = was_comp;
                         }
                     }
                     KeyCode::Char('g') => {
                         self.selected_idx = 0;
+                        let was_comp = self.compare_mode;
                         self.load_entries()?;
+                        self.compare_mode = was_comp;
                     }
                     KeyCode::Char('G') | KeyCode::End => {
                         self.selected_idx = self.timeline_len().saturating_sub(1);
+                        let was_comp = self.compare_mode;
                         self.load_entries()?;
+                        self.compare_mode = was_comp;
                     }
                     KeyCode::Char('/') => {
                         self.clear_search();
                         self.focus = Focus::Search;
+                    }
+                    KeyCode::Char('p') => {
+                        self.open_picker();
                     }
                     KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => {
                         self.focus = Focus::Timeline;
@@ -365,18 +503,84 @@ impl App {
                     KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => {
                         self.focus = Focus::Files;
                     }
+                    KeyCode::Char('d') => {
+                        if self.compare_mode {
+                            // In compare mode — press d to run compare against current epoch
+                            // Works regardless of focus (file or timeline)
+                            self.compare_pending_epoch = true;
+                            self.compare_mode = false;
+                            self.add_output("● Comparing...");
+                        } else if self.focus == Focus::Files {
+                            // Start compare: select a file, switch to timeline
+                            let row_path = self.visible_rows.get(self.selected_file_idx).map(|r| r.full_path.clone());
+                            let is_dir = self.visible_rows.get(self.selected_file_idx).map(|r| r.is_dir).unwrap_or(false);
+                            if let Some(ref path) = row_path {
+                                if !is_dir {
+                                    // Find original index
+                                    if let Some(orig_idx) = self.visible_rows.iter().position(|r| r.full_path == *path) {
+                                        self.enter_compare_mode(orig_idx);
+                                        self.focus = Focus::Timeline;
+                                        self.add_output(&format!("  Select an epoch to compare '{}' with...", path));
+                                    }
+                                }
+                            }
+                        }
+                    }
                     KeyCode::Enter | KeyCode::Char(' ') => {
                         if self.focus == Focus::Files {
-                            self.toggle_current_folder();
+                            // If on a file (not dir), preview it
+                            let row_path = self.visible_rows.get(self.selected_file_idx).map(|r| r.full_path.clone());
+                            let is_dir = self.visible_rows.get(self.selected_file_idx).map(|r| r.is_dir).unwrap_or(false);
+                            if is_dir {
+                                self.toggle_current_folder();
+                            } else if !self.show_preview {
+                                if let Some(ref path) = row_path {
+                                    self.preview_file(path);
+                                }
+                            }
                         }
                     }
                     KeyCode::Char('r') => {
                         self.reload()?;
                     }
+                    KeyCode::Char('i') => {
+                        self.run_info();
+                    }
                     KeyCode::Char('s') => {
                         self.run_snap();
                     }
                     _ => {}
+                }
+            }
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                ..
+            }) => {
+                // Scroll wheel only works for diff and preview content
+                if !self.compare_result_lines.is_empty() {
+                    let max = self.compare_result_lines.len().saturating_sub(1);
+                    if self.diff_scroll < max {
+                        self.diff_scroll += 1;
+                    }
+                } else if self.show_preview && !self.preview_content.is_empty() {
+                    if self.preview_scroll + 1 < self.preview_content.len() {
+                        self.preview_scroll += 1;
+                    }
+                }
+            }
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                ..
+            }) => {
+                // Scroll wheel only works for diff and preview content
+                if !self.compare_result_lines.is_empty() {
+                    if self.diff_scroll > 0 {
+                        self.diff_scroll -= 1;
+                    }
+                } else if self.show_preview && !self.preview_content.is_empty() {
+                    if self.preview_scroll > 0 {
+                        self.preview_scroll -= 1;
+                    }
                 }
             }
             Event::Mouse(MouseEvent {
@@ -388,12 +592,98 @@ impl App {
             }) => {
                 let shift = modifiers.contains(KeyModifiers::SHIFT);
 
+                // 0. If picker is open, handle picker clicks
+                if self.show_picker {
+                    // Check delete confirm buttons
+                    if self.picker_confirm_delete.is_some() {
+                        let ya = self.picker_confirm_yes_area;
+                        let na = self.picker_confirm_no_area;
+                        if ya.width > 0 && column >= ya.x && column < ya.x + ya.width
+                            && row >= ya.y && row < ya.y + ya.height
+                        {
+                            let _ = self.delete_current_palin();
+                            return Ok(());
+                        }
+                        if na.width > 0 && column >= na.x && column < na.x + na.width
+                            && row >= na.y && row < na.y + na.height
+                        {
+                            self.picker_confirm_delete = None;
+                            return Ok(());
+                        }
+                        return Ok(());
+                    }
+                    // Check click on palin items
+                    let area = self.term_area;
+                    let picker_x = area.x + 4;
+                    let picker_y = area.y + 3;
+                    let list_start_y = picker_y + 2;
+                    if row >= list_start_y && column >= picker_x && column <= area.x + area.width - 4 {
+                        let idx = (row - list_start_y) as usize;
+                        if idx < self.all_palins.len() {
+                            if column >= area.x + area.width - 16 && column <= area.x + area.width - 4 {
+                                // Click on delete button
+                                if let Some((name, _)) = self.all_palins.get(idx) {
+                                    if name != &self.palin.name {
+                                        self.picker_confirm_delete = Some(name.clone());
+                                    }
+                                }
+                            } else {
+                                self.picker_selected = idx;
+                                if button == MouseButton::Left {
+                                    let name_to_switch = self.all_palins.get(idx).map(|(n, _)| n.clone());
+                                    if let Some(ref name) = name_to_switch {
+                                        let _ = self.switch_to_palin(name);
+                                    }
+                                }
+                            }
+                            return Ok(());
+                        }
+                    }
+                    // Click outside to close
+                    self.show_picker = false;
+                    return Ok(());
+                }
+
+                // Check rename mode clicks
+                if self.rename_mode {
+                    // Commit on click outside (or handle specifically)
+                    self.rename_mode = false;
+                    return Ok(());
+                }
+
                 // 1. Check Snap button
                 let btn = self.snap_button_area;
                 if column >= btn.x && column < btn.x + btn.width
                     && row >= btn.y && row < btn.y + btn.height
                 {
                     self.run_snap();
+                    return Ok(());
+                }
+
+                // Check GC button
+                let gcbtn = self.gc_button_area;
+                if gcbtn.width > 0 && column >= gcbtn.x && column < gcbtn.x + gcbtn.width
+                    && row >= gcbtn.y && row < gcbtn.y + gcbtn.height
+                {
+                    self.run_gc_confirm();
+                    return Ok(());
+                }
+
+                // Check Info button
+                let ibtn = self.info_button_area;
+                if ibtn.width > 0 && column >= ibtn.x && column < ibtn.x + ibtn.width
+                    && row >= ibtn.y && row < ibtn.y + ibtn.height
+                {
+                    self.run_info();
+                    return Ok(());
+                }
+
+                // Check Rename button
+                let rbtn = self.rename_button_area;
+                if rbtn.width > 0 && column >= rbtn.x && column < rbtn.x + rbtn.width
+                    && row >= rbtn.y && row < rbtn.y + rbtn.height
+                {
+                    self.begin_rename();
                     return Ok(());
                 }
 
@@ -428,23 +718,19 @@ impl App {
                     return Ok(());
                 }
 
-                // 4. Check detail list area for file click (enter compare mode)
+                // 4. Check detail list area for file click
                 let dl = self.detail_list_area;
                 if dl.width > 0 && column >= dl.x && column < dl.x + dl.width
                     && row >= dl.y && row < dl.y + dl.height
                 {
-                    // Clear diff view on click
-                    self.compare_result_lines.clear();
-                    self.compare_error = None;
-                    let filtered = self.filtered_visible_rows();
                     let vis_idx = (row - dl.y) as usize;
-                    if vis_idx < filtered.len() {
-                        let clicked_row = filtered[vis_idx];
-                        if !clicked_row.is_dir {
-                            // Find the original index in visible_rows
-                            if let Some(orig_idx) = self.visible_rows.iter().position(|r| r.full_path == clicked_row.full_path) {
+                    let file_info = self.filtered_visible_rows().get(vis_idx).map(|r| {
+                        (r.full_path.clone(), r.is_dir)
+                    });
+                    if let Some((ref file_path, is_dir)) = file_info {
+                        if !is_dir {
+                            if let Some(orig_idx) = self.visible_rows.iter().position(|r| r.full_path == *file_path) {
                                 self.selected_file_idx = orig_idx;
-                                self.enter_compare_mode(orig_idx);
                             }
                             return Ok(());
                         }
@@ -491,10 +777,21 @@ impl App {
                     };
                     if item_idx < self.timeline_len() {
                         // Check if click is on the right-side action buttons
-                        let btn_region_x = tl.x + tl.width.saturating_sub(9);
-                        if column >= btn_region_x && button == MouseButton::Left {
-                            let btn_offset = column - btn_region_x;
+                        // Compute btn_start from timeline width (display columns) rather than
+                        // using the byte-length-based stored value, to avoid misalignment
+                        // from multi-byte characters (○, 🔒, etc.) in labels.
+                        let btn_start = tl.x + tl.width.saturating_sub(12); // 12 = buttons display width
+                        if btn_start > 0 && column >= btn_start && button == MouseButton::Left {
+                            let btn_offset = column - btn_start;
+                            // First 4 chars: lock indicator
                             if btn_offset < 4 {
+                                let epoch_only = item_idx < self.epochs.len();
+                                if epoch_only {
+                                    let _ = self.toggle_epoch_lock(item_idx);
+                                }
+                            } else if btn_offset < 8 {
+                                // [↩] region: columns 4-7 (4-7 are the 4 chars of " [↩" before the last ])
+                                // Actually [↩ is 3 cols but we're generous with the region
                                 self.initiate_action(ActionKind::Restore, item_idx, shift);
                             } else {
                                 self.initiate_action(ActionKind::Delete, item_idx, shift);
@@ -504,10 +801,10 @@ impl App {
                         // Regular click — select the item
                         // If we were waiting for a compare target, run compare
                         if self.compare_mode {
-                            self.compare_source_idx = item_idx;
+                            // Don't overwrite compare_source_idx — it's stored from enter_compare_mode
                             self.compare_pending_epoch = true;
                             self.compare_mode = false;
-                            self.add_output(&format!("● Comparing..."));
+                            self.add_output("● Comparing...");
                             return Ok(());
                         }
                         self.selected_idx = item_idx;
@@ -610,6 +907,78 @@ impl App {
             }
             None => {}
         }
+    }
+
+    // ── Info ────────────────────────────────────────────────
+
+    pub fn run_info(&mut self) {
+        let name = self.palin.name.clone();
+        self.run_cmd(&["info", &name]);
+    }
+
+    // ── GC ──────────────────────────────────────────────────
+
+    /// Check for unreferenced inks and show confirmation
+    pub fn run_gc_confirm(&mut self) {
+        let name = self.palin.name.clone();
+        let conn = match storage::open_db(&name) {
+            Ok(c) => c,
+            Err(e) => {
+                self.add_output(&format!("✖ DB error: {}", e));
+                return;
+            }
+        };
+        let unreferenced = match storage::get_unreferenced_inks(&conn) {
+            Ok(u) => u,
+            Err(e) => {
+                self.add_output(&format!("✖ Error: {}", e));
+                return;
+            }
+        };
+        if unreferenced.is_empty() {
+            self.add_output("✦ No unreferenced inks to clean up.");
+            return;
+        }
+        let total_size: u64 = unreferenced.iter().map(|i| i.size as u64).sum();
+        self.pending_gc = true;
+        self.add_output(&format!(
+            "  {} unreferenced ink(s) ({} bytes). GC? [y/N]",
+            unreferenced.len(),
+            total_size
+        ));
+    }
+
+    /// Execute the garbage collection (delete unreferenced inks)
+    pub fn execute_gc(&mut self) {
+        self.pending_gc = false;
+        let name = self.palin.name.clone();
+        let conn = match storage::open_db(&name) {
+            Ok(c) => c,
+            Err(_) => {
+                self.add_output("✖ Failed to open DB");
+                return;
+            }
+        };
+        let unreferenced = match storage::get_unreferenced_inks(&conn) {
+            Ok(u) => u,
+            Err(_) => {
+                self.add_output("✖ Failed to query inks");
+                return;
+            }
+        };
+        let mut deleted = 0usize;
+        let mut total_size = 0u64;
+        for ink in &unreferenced {
+            if storage::ink::delete_ink_file(&name, &ink.hash).is_ok() {
+                let _ = storage::delete_ink_from_db(&conn, &ink.hash);
+                deleted += 1;
+                total_size += ink.size as u64;
+            }
+        }
+        self.add_output(&format!(
+            "✦ GC complete: deleted {} unreferenced ink(s) ({} bytes reclaimed)",
+            deleted, total_size
+        ));
     }
 
     // ── Snap ────────────────────────────────────────────────
@@ -742,6 +1111,8 @@ impl App {
     pub fn enter_compare_mode(&mut self, file_idx: usize) {
         if let Some(row) = self.visible_rows.get(file_idx) {
             if !row.is_dir {
+                // Store the currently selected epoch as the compare source
+                self.compare_source_idx = self.selected_idx;
                 self.compare_mode = true;
                 self.compare_file_path = row.full_path.clone();
                 self.compare_result_lines.clear();
@@ -771,9 +1142,9 @@ impl App {
             }
         };
 
-        // Resolve source and target items from storage directly
-        let (source_id, source_type_str, source_display) = self.resolve_item_info(selected_idx);
-        let (target_id, target_type_str, target_display) = self.resolve_item_info(compare_source_idx);
+        // Resolve source (original epoch) and target (compare-to epoch) from storage
+        let (source_id, source_type_str, source_display) = self.resolve_item_info(compare_source_idx);
+        let (target_id, target_type_str, target_display) = self.resolve_item_info(selected_idx);
 
         if source_id.is_none() || target_id.is_none() {
             self.compare_error = Some("Source or target not found.".to_string());
@@ -961,6 +1332,171 @@ impl App {
         }
     }
 
+    // ── Palin picker ────────────────────────────────────
+
+    pub fn load_palins(&mut self) {
+        match storage::read_registry() {
+            Ok(registry) => {
+                let mut list: Vec<(String, String)> = registry.palins
+                    .iter()
+                    .map(|(n, e)| (n.clone(), e.path.clone()))
+                    .collect();
+                list.sort_by(|a, b| a.0.cmp(&b.0));
+                self.all_palins = list;
+            }
+            Err(_) => {
+                self.all_palins = Vec::new();
+            }
+        }
+    }
+
+    pub fn open_picker(&mut self) {
+        self.load_palins();
+        self.picker_selected = self.all_palins.iter().position(|(n, _)| n == &self.palin.name).unwrap_or(0);
+        self.show_picker = true;
+        self.picker_confirm_delete = None;
+    }
+
+    pub fn switch_to_palin(&mut self, name: &str) -> Result<()> {
+        let config = storage::read_palin_config(name)?;
+        let conn = storage::open_db(name)?;
+        self.palin = ResolvedPalin {
+            name: name.to_string(),
+            path: std::path::PathBuf::from(&config.path),
+            config,
+        };
+        self.epochs = storage::list_epochs(&conn)?;
+        self.phantoms = storage::list_phantoms(&conn)?;
+        self.selected_idx = 0;
+        self.load_entries()?;
+        self.show_picker = false;
+        self.add_output(&format!("✦ Switched to '{}'", name));
+        Ok(())
+    }
+
+    pub fn delete_current_palin(&mut self) -> Result<()> {
+        if let Some(ref name) = self.picker_confirm_delete.clone() {
+            storage::unregister_palin(name)?;
+            let palin_dir = crate::types::palimpsest_dir()?.join(name);
+            if palin_dir.exists() {
+                std::fs::remove_dir_all(&palin_dir)?;
+            }
+            self.add_output(&format!("✦ Deleted palin '{}'", name));
+            self.picker_confirm_delete = None;
+            self.load_palins();
+            // Switch to first available palin or reload current
+            if let Some(first) = self.all_palins.first().cloned() {
+                self.switch_to_palin(&first.0)?;
+            }
+        }
+        Ok(())
+    }
+
+    // ── File preview ────────────────────────────────────
+
+    pub fn preview_file(&mut self, file_path: &str) {
+        let conn = match storage::open_db(&self.palin.name) {
+            Ok(c) => c,
+            Err(_) => { return; }
+        };
+        let items = self.timeline_items();
+        if items.is_empty() { return; }
+        let idx = self.selected_idx.min(items.len().saturating_sub(1));
+        let (snap_id, snap_type) = match items[idx] {
+            TimelineItem::Epoch(e) => (e.id, "epoch"),
+            TimelineItem::Phantom(p) => (p.id, "phantom"),
+        };
+        let entries = match storage::get_file_entries(&conn, snap_id, snap_type) {
+            Ok(e) => e,
+            Err(_) => { return; }
+        };
+        if let Some(entry) = entries.iter().find(|e| e.file_path == file_path) {
+            if let Some(ref hash) = entry.ink_hash {
+                match storage::ink::read_ink(&self.palin.name, hash) {
+                    Ok(data) => {
+                        let text = String::from_utf8_lossy(&data);
+                        self.preview_content = text.lines().map(|l| l.to_string()).collect();
+                        self.preview_scroll = 0;
+                        self.show_preview = true;
+                    }
+                    Err(_) => {
+                        self.add_output(&format!("✖ Failed to read '{}'", file_path));
+                    }
+                }
+            } else {
+                self.preview_content = vec!["(empty file / binary)".to_string()];
+                self.preview_scroll = 0;
+                self.show_preview = true;
+            }
+        }
+    }
+
+    // ── Rename palin ────────────────────────────────────
+
+    pub fn begin_rename(&mut self) {
+        self.rename_mode = true;
+        self.rename_input = self.palin.name.clone();
+        self.rename_cursor = self.rename_input.len();
+    }
+
+    pub fn commit_rename(&mut self) -> Result<()> {
+        let new_name = self.rename_input.trim().to_string();
+        if new_name.is_empty() || new_name == self.palin.name {
+            self.rename_mode = false;
+            return Ok(());
+        }
+        let old_name = self.palin.name.clone();
+        // Run the rename command via subprocess
+        let exe_path = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(_) => { self.rename_mode = false; return Ok(()); }
+        };
+        let result = std::process::Command::new(&exe_path)
+            .args(&["rename", &old_name, &new_name])
+            .output();
+        match result {
+            Ok(output) => {
+                if !output.stdout.is_empty() {
+                    self.add_output(&String::from_utf8_lossy(&output.stdout));
+                }
+                if !output.stderr.is_empty() {
+                    self.add_output(&format!("✖ {}", String::from_utf8_lossy(&output.stderr)));
+                }
+                if output.status.success() {
+                    self.palin.name = new_name;
+                    self.palin.config.name = self.palin.name.clone();
+                    self.add_output("✦ Palin renamed");
+                    self.load_palins();
+                }
+            }
+            Err(e) => {
+                self.add_output(&format!("✖ Rename failed: {}", e));
+            }
+        }
+        self.rename_mode = false;
+        Ok(())
+    }
+
+    // ── Lock / Unlock ───────────────────────────────────
+
+    pub fn toggle_epoch_lock(&mut self, item_idx: usize) -> Result<()> {
+        let epoch = match self.epochs.get(item_idx) {
+            Some(e) => e.clone(),
+            None => { return Ok(()); }
+        };
+        let new_locked = !epoch.is_locked;
+        let conn = storage::open_db(&self.palin.name)?;
+        storage::set_epoch_lock(&conn, epoch.id, new_locked)?;
+        let name = epoch.display_name();
+        self.reload()?;
+        self.add_output(&format!(
+            "✦ {} {}",
+            if new_locked { "Locked" } else { "Unlocked" },
+            name
+        ));
+        Ok(())
+    }
+
     // ── Folder status propagation ─────────────────────────
 
     /// Propagate the most significant child status up to directories.
@@ -1012,14 +1548,18 @@ impl App {
         let max = self.timeline_len().saturating_sub(1);
         if self.selected_idx < max {
             self.selected_idx += 1;
+            let was_comparing = self.compare_mode;
             let _ = self.load_entries();
+            self.compare_mode = was_comparing;
         }
     }
 
     fn scroll_up(&mut self) {
         if self.selected_idx > 0 {
             self.selected_idx -= 1;
+            let was_comparing = self.compare_mode;
             let _ = self.load_entries();
+            self.compare_mode = was_comparing;
         }
     }
 
