@@ -1,6 +1,6 @@
 [package]
 name = "palin"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "A CLI + TUI tool for layering your project's history through time"
 authors = ["Palimpsest"]
@@ -9,9 +9,9 @@ authors = ["Palimpsest"]
 # CLI framework
 clap = { version = "4", features = ["derive"] }
 
-# TUI (Phase 2, but included for scaffolding)
-ratatui = { version = "0.29", features = ["crossterm"], optional = true }
-crossterm = { version = "0.28", optional = true }
+# TUI
+ratatui = { version = "0.29", features = ["crossterm"] }
+crossterm = { version = "0.28" }
 
 # Database
 rusqlite = { version = "0.34", features = ["bundled"] }
@@ -63,7 +63,6 @@ flate2 = "1"
 
 [features]
 default = []
-tui = ["ratatui", "crossterm"]
 daemon = ["tokio", "zstd"]
 
 [[bin]]

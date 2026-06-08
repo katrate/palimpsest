@@ -1,6 +1,7 @@
 mod commands;
 mod diff;
 mod storage;
+mod tui;
 mod types;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -427,9 +428,10 @@ fn main() -> anyhow::Result<()> {
             };
             commands::export::execute(name.as_deref(), &epoch, fmt, output.as_deref())?;
         }
-        Commands::View { name: _ } => {
-            println!("✦ TUI mode coming in Phase 2!");
-            println!("  Use `palin log` or `palin diff` in the meantime.");
+        Commands::View { name } => {
+            let resolved = commands::snap::resolve_palin(name.as_deref())?;
+            let mut app = tui::app::App::new(resolved)?;
+            app.run()?;
         }
     }
 
