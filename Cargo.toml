@@ -63,9 +63,6 @@ unicode-width = "0.2"
 # HTTP client (for auto-update)
 ureq = "2"
 
-# Crypto (pinned to fix aarch64-apple-darwin build with Rust ≥1.95)
-ring = "0.17.15"
-
 # Tar archive support
 tar = "0.4"
 flate2 = "1"
