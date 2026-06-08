@@ -61,7 +61,7 @@ ignore = "0.4"
 unicode-width = "0.2"
 
 # HTTP client (for auto-update)
-ureq = { version = "2", features = ["native-tls"] }
+ureq = { version = "2", default-features = false, features = ["native-tls", "gzip"] }
 
 # Tar archive support
 tar = "0.4"
