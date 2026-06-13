@@ -1,3 +1,4 @@
+use crate::commands;
 use crate::storage;
 use crate::types::{Epoch, FileEntry, FileStatus, Phantom, ResolvedPalin};
 use anyhow::Result;
@@ -7,7 +8,12 @@ use crossterm::event::{
 };
 use ratatui::layout::Rect;
 use std::collections::HashSet;
+use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
+
+enum SnapMessage {
+    Done(Vec<String>, anyhow::Result<()>),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -68,7 +74,12 @@ pub struct App {
     pub confirm_no_area: Rect,
     pub pending_action: Option<PendingAction>,
     pub pending_execute_action: Option<PendingAction>,
-    pub pending_snap: bool,
+    pub snap_in_progress: bool,
+    snap_start_frame: u64,
+    patience_shown: bool,
+    pub frame_count: u64,
+    snap_rx: Option<Receiver<SnapMessage>>,
+
     pub command_output: Vec<String>,
     pub search_query: String,
     pub search_cursor: usize,
@@ -130,7 +141,11 @@ impl App {
             confirm_no_area: Rect::default(),
             pending_action: None,
             pending_execute_action: None,
-            pending_snap: false,
+            snap_in_progress: false,
+            snap_start_frame: 0,
+            patience_shown: false,
+            frame_count: 0,
+            snap_rx: None,
             command_output: Vec::new(),
             search_query: String::new(),
             search_cursor: 0,
@@ -229,17 +244,65 @@ impl App {
 
         let result = (|| -> Result<()> {
             while self.running {
+                self.frame_count += 1;
+
+                // Animate snap spinner and show patience message if slow
+                if self.snap_in_progress {
+                    let frames = ['◐', '◓', '◑', '◒'];
+                    let idx = (self.frame_count / 2) as usize % frames.len();
+                    if let Some(first) = self.command_output.first_mut() {
+                        if first.contains("Scanning files") {
+                            *first = format!("{} Scanning files...", frames[idx]);
+                        }
+                    }
+                    if !self.patience_shown && self.frame_count - self.snap_start_frame > 100 {
+                        self.patience_shown = true;
+                        self.add_output("  It's taking longer than usual, please be patient...");
+                    }
+                }
+
                 terminal.draw(|frame| {
                     self.term_area = frame.area();
                     crate::tui::ui::render(self, frame);
                 })?;
 
-                // Run pending snap (after draw so message is visible first)
-                if self.pending_snap {
-                    self.pending_snap = false;
-                    let name = self.palin.name.clone();
-                    self.run_cmd(&["snap", &name]);
-                    let _ = self.reload();
+                // Poll background snap thread for output
+                let snap_msgs = match self.snap_rx {
+                    Some(ref rx) => {
+                        let mut msgs = Vec::new();
+                        while let Ok(msg) = rx.try_recv() {
+                            msgs.push(msg);
+                        }
+                        Some(msgs)
+                    }
+                    None => None,
+                };
+                if let Some(msgs) = snap_msgs {
+                    let mut snap_done = false;
+                    for msg in msgs {
+                        match msg {
+                            SnapMessage::Done(lines, result) => {
+                                snap_done = true;
+                                self.snap_in_progress = false;
+                                match result {
+                                    Ok(()) => {
+                                        for line in lines.iter().skip(1) {
+                                            self.add_output(line);
+                                        }
+                                        if let Err(e) = self.reload() {
+                                            self.add_output(&format!("✖ Reload failed: {}", e));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self.add_output(&format!("✖ Snap failed: {}", e));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if snap_done {
+                        self.snap_rx = None;
+                    }
                 }
 
                 // Run pending timeline action (after draw so message is visible first)
@@ -1033,8 +1096,28 @@ impl App {
     // ── Snap ────────────────────────────────────────────────
 
     pub fn run_snap(&mut self) {
-        self.add_output("● Scanning files...");
-        self.pending_snap = true;
+        if self.snap_in_progress {
+            self.add_output("  Snap already in progress...");
+            return;
+        }
+        self.snap_in_progress = true;
+        self.snap_start_frame = self.frame_count;
+        self.patience_shown = false;
+        self.add_output("◐ Scanning files...");
+        let name = self.palin.name.clone();
+        let (tx, rx) = mpsc::channel();
+        self.snap_rx = Some(rx);
+        std::thread::spawn(move || {
+            let res = commands::snap::execute_inner(Some(&name), None);
+            match res {
+                Ok(lines) => {
+                    let _ = tx.send(SnapMessage::Done(lines, Ok(())));
+                }
+                Err(e) => {
+                    let _ = tx.send(SnapMessage::Done(Vec::new(), Err(e)));
+                }
+            }
+        });
     }
 
     // ── Command runner ────────────────────────────────────

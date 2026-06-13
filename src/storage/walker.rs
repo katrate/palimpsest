@@ -1,5 +1,6 @@
 use crate::types::{FileEntry, FileStatus};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Walk a directory and produce file entries, optionally comparing against previous entries
@@ -9,22 +10,41 @@ pub fn walk_directory(
 ) -> anyhow::Result<Vec<WalkedFile>> {
     let glob_set = build_exclude_set(exclude_patterns)?;
     let mut files = Vec::new();
-
-    walk_dir_recursive(dir, dir, &glob_set, &mut files)?;
-
+    walk_dir_recursive(dir, dir, &glob_set, &mut files, None, false)?;
     Ok(files)
 }
 
-/// Walk directory and produce file entries with status compared to previous epoch
+/// Walk directory and produce file entries with status compared to previous epoch.
+/// Skips reading content for files whose size+mtime match the previous entry,
+/// and for the first snap (no previous entries) avoids hashing entirely.
 pub fn walk_and_diff(
     dir: &Path,
     exclude_patterns: &[String],
     previous_entries: &[FileEntry],
 ) -> anyhow::Result<Vec<FileEntry>> {
-    let current_files = walk_directory(dir, exclude_patterns)?;
+    let is_first = previous_entries.is_empty();
+    let glob_set = build_exclude_set(exclude_patterns)?;
 
-    // Build map of previous entries by path
-    let prev_map: std::collections::HashMap<&str, &FileEntry> = previous_entries
+    // Build a lookup: (path, size, mtime) -> previous entry's hash
+    // Used to skip reading unchanged files in the walker
+    let prev_meta: HashMap<(String, i64, String), String> = previous_entries
+        .iter()
+        .filter(|e| e.status != FileStatus::Deleted)
+        .filter_map(|e| {
+            e.modified_at.as_ref().map(|m| {
+                ((e.file_path.clone(), e.file_size.unwrap_or(0), m.clone()),
+                 e.ink_hash.clone().unwrap_or_default())
+            })
+        })
+        .collect();
+
+    let prev_meta_ref = if is_first { None } else { Some(&prev_meta) };
+
+    let mut current_files = Vec::new();
+    walk_dir_recursive(dir, dir, &glob_set, &mut current_files, prev_meta_ref, is_first)?;
+
+    // Build map of previous entries by path for status comparison
+    let prev_map: HashMap<&str, &FileEntry> = previous_entries
         .iter()
         .filter(|e| e.status != FileStatus::Deleted)
         .map(|e| (e.file_path.as_str(), e))
@@ -106,7 +126,6 @@ fn build_exclude_set(patterns: &[String]) -> anyhow::Result<GlobSet> {
 }
 
 fn is_binary_content(data: &[u8]) -> bool {
-    // Check for null bytes in the first 8KB
     if data.is_empty() {
         return false;
     }
@@ -119,6 +138,8 @@ fn walk_dir_recursive(
     current_dir: &Path,
     exclude_set: &GlobSet,
     files: &mut Vec<WalkedFile>,
+    prev_meta: Option<&HashMap<(String, i64, String), String>>,
+    is_first_snap: bool,
 ) -> anyhow::Result<()> {
     if !current_dir.is_dir() {
         return Ok(());
@@ -126,7 +147,7 @@ fn walk_dir_recursive(
 
     let entries = match std::fs::read_dir(current_dir) {
         Ok(entries) => entries,
-        Err(_) => return Ok(()), // Skip unreadable directories
+        Err(_) => return Ok(()),
     };
 
     for entry in entries {
@@ -143,33 +164,19 @@ fn walk_dir_recursive(
             .to_string()
             .replace('\\', "/");
 
-        // Check exclusion patterns
         if exclude_set.is_match(&relative) || exclude_set.is_match(path.to_string_lossy().as_ref()) {
             continue;
         }
 
         if path.is_dir() {
-            walk_dir_recursive(root, &path, exclude_set, files)?;
+            walk_dir_recursive(root, &path, exclude_set, files, prev_meta, is_first_snap)?;
         } else if path.is_file() {
             let metadata = match std::fs::metadata(&path) {
                 Ok(m) => m,
                 Err(_) => continue,
             };
 
-            let data = match std::fs::read(&path) {
-                Ok(d) => d,
-                Err(_) => continue,
-            };
-
-            let is_bin = is_binary_content(&data);
-            let hash = if is_bin {
-                // For binary files, just hash the path + size + modified time
-                let meta_str = format!("{}:{}:{:?}", relative, metadata.len(), metadata.modified().ok());
-                crate::storage::ink::hash_content(meta_str.as_bytes())
-            } else {
-                crate::storage::ink::hash_content(&data)
-            };
-
+            let size = metadata.len() as i64;
             let modified = metadata
                 .modified()
                 .ok()
@@ -184,10 +191,49 @@ fn walk_dir_recursive(
                 })
                 .unwrap_or_default();
 
+            // First snap: skip reading entirely — hash will be computed in snap.rs
+            if is_first_snap {
+                files.push(WalkedFile {
+                    relative_path: relative,
+                    hash: String::new(),
+                    size,
+                    modified_at: modified,
+                    is_binary: false,
+                });
+                continue;
+            }
+
+            // Skip reading if size+mtime match previous entry (file is unchanged)
+            if let Some(meta_map) = prev_meta {
+                if let Some(prev_hash) = meta_map.get(&(relative.clone(), size, modified.clone())) {
+                    files.push(WalkedFile {
+                        relative_path: relative,
+                        hash: prev_hash.clone(),
+                        size,
+                        modified_at: modified,
+                        is_binary: false,
+                    });
+                    continue;
+                }
+            }
+
+            let data = match std::fs::read(&path) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+
+            let is_bin = is_binary_content(&data);
+            let hash = if is_bin {
+                let meta_str = format!("{}:{}:{:?}", relative, metadata.len(), metadata.modified().ok());
+                crate::storage::ink::hash_content(meta_str.as_bytes())
+            } else {
+                crate::storage::ink::hash_content(&data)
+            };
+
             files.push(WalkedFile {
                 relative_path: relative,
                 hash,
-                size: metadata.len() as i64,
+                size,
                 modified_at: modified,
                 is_binary: is_bin,
             });

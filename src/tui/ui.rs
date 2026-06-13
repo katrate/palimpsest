@@ -69,7 +69,8 @@ fn render_header(frame: &mut Frame, area: Rect, app: &mut App) {
         let prompt_text = format!(" Rename: {}_", app.rename_input);
         let gc_text = " [GC] ";
         let info_text = " [Info] ";
-        let snap_text = " [ ◆ Snap ] ";
+        let spinner_snap = if app.snap_in_progress { '◐' } else { '◆' };
+        let snap_text = format!(" [ {spinner_snap} Snap ] ");
         let total_other = gc_text.len() as u16 + info_text.len() as u16 + snap_text.len() as u16;
         let gc_x = (area.width as usize).saturating_sub(total_other as usize) as u16;
         let info_x = gc_x + gc_text.len() as u16;
@@ -109,7 +110,14 @@ fn render_header(frame: &mut Frame, area: Rect, app: &mut App) {
     let gc_text = " [GC] ";
     let info_text = " [Info] ";
     let rename_text = " [Rename] ";
-    let snap_text = " [ ◆ Snap ] ";
+    let spinner = if app.snap_in_progress {
+        let frames = ['◐', '◓', '◑', '◒'];
+        let idx = (app.frame_count / 3) as usize % frames.len();
+        frames[idx]
+    } else {
+        '◆'
+    };
+    let snap_text = format!(" [ {spinner} Snap ] ");
     let total_btn_w = gc_text.len() as u16 + info_text.len() as u16 + rename_text.len() as u16 + snap_text.len() as u16;
     let gc_x = (area.width as usize).saturating_sub(total_btn_w as usize) as u16;
     let info_x = gc_x + gc_text.len() as u16;

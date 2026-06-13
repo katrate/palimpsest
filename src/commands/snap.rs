@@ -25,10 +25,21 @@ pub fn resolve_palin(name: Option<&str>) -> anyhow::Result<ResolvedPalin> {
     }
 }
 
-/// Execute `palin snap [name] [-m message]`
+/// Execute `palin snap [name] [-m message]` — CLI version, prints to stdout
 pub fn execute(name: Option<&str>, message: Option<&str>) -> anyhow::Result<()> {
+    let lines = execute_inner(name, message)?;
+    for line in &lines {
+        println!("{}", line);
+    }
+    Ok(())
+}
+
+/// Inner snap logic — returns output lines as strings (no I/O side effects).
+/// Used by both the CLI and the TUI (to avoid blocking subprocess).
+pub fn execute_inner(name: Option<&str>, message: Option<&str>) -> anyhow::Result<Vec<String>> {
     let resolved = resolve_palin(name)?;
-    println!("● Scanning files...");
+    let mut out = Vec::new();
+    out.push("● Scanning files...".to_string());
     let conn = storage::open_db(&resolved.name)?;
 
     // Clean up expired phantoms
@@ -73,12 +84,15 @@ pub fn execute(name: Option<&str>, message: Option<&str>) -> anyhow::Result<()> 
         is_first,
     )?;
 
-    // Store inks and record references first, updating hashes to match
-    // what was actually stored (important: the walker may compute a different
-    // hash for binary files than the content hash used by store_ink)
+    // Store inks and record references
     let mut entries = file_entries;
     for entry in &mut entries {
         if let Some(ref mut hash) = entry.ink_hash {
+            // Skip unchanged files — content & hash are already correct from walker
+            if entry.status == FileStatus::Unchanged {
+                storage::upsert_ink(&conn, hash, entry.file_size.unwrap_or(0))?;
+                continue;
+            }
             let full_path = resolved.path.join(&entry.file_path);
             if full_path.exists() && entry.status != FileStatus::Deleted {
                 let content = std::fs::read(&full_path)?;
@@ -112,14 +126,14 @@ pub fn execute(name: Option<&str>, message: Option<&str>) -> anyhow::Result<()> 
         format!("epoch-{new_epoch_num}")
     };
 
-    println!("✦ Snapshot saved as {epoch_display}");
+    out.push(format!("✦ Snapshot saved as {epoch_display}"));
     if let Some(msg) = message {
-        println!("  \"{msg}\"");
+        out.push(format!("  \"{msg}\""));
     }
-    println!(
+    out.push(format!(
         "  Files: +{added} ~{modified} -{deleted} ={unchanged} (total {})",
         entries.len()
-    );
+    ));
 
-    Ok(())
+    Ok(out)
 }

@@ -1,6 +1,6 @@
 [package]
 name = "palin"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 description = "✦ Palimpsest — Git-inspired versioned snapshot browser with a professional TUI. Track, browse, compare, and restore your project's history through time."
 authors = ["Palimpsest"]
